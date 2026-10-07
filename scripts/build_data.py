@@ -17,13 +17,23 @@ oe=open('/tmp/oe.txt').read()
 metrics=[]
 for m in re.finditer(r'Metric ID\s+([A-Z]+\.OE\.\d+)\s+Metric Name\s+(.*?)\n\s*Metric Description(.*?)Domain Name\s+(.*?)\n\s*Data Platforms\s+(.*?)\n(.*?)Acceptable Threshold\s+(.*?)\n',oe,re.S):
     mid,name,desc,dom,plat,mid2,thr=m.groups()
-    metrics.append({'code':mid,'name':clean(name),'platform':clean(plat),'threshold':clean(thr),'domain':mid.split('.')[0]})
+    metrics.append({'code':mid,'name':clean(name),'platform':clean(plat),'threshold':clean(thr),'domain':mid.split('.')[0],'desc':clean(desc)[:700]})
 seen={};[seen.setdefault(m['code'],m) for m in metrics]; metrics=list(seen.values())
-metrics+=[{'code':'OD.OE.05','name':'Response effectiveness to new open dataset requests','platform':'Open Data Platform (ODP)','threshold':'70%','domain':'OD'},{'code':'DO.OE.02','name':'Responsiveness of GSB API calls','platform':'Government Service Bus (GSB)','threshold':'94%','domain':'DO'}]  # tables split across PDF pages; verified manually
+metrics+=[{'code':'OD.OE.05','name':'Response effectiveness to new open dataset requests','platform':'Open Data Platform (ODP)','threshold':'70%','domain':'OD','desc':'Measures the time taken to process new open dataset requests raised on ODP. A request ends by publishing the dataset or rejecting it with justification when the data is unavailable.'},{'code':'DO.OE.02','name':'Responsiveness of GSB API calls','platform':'Government Service Bus (GSB)','threshold':'94%','domain':'DO','desc':'Measures the percentage of failed API calls (errors caused by the provider entity) against total calls on the entity APIs published on GSB.'}]  # tables split across PDF pages; verified manually
 W={'DSI.OE.02':.20,'DO.OE.03':.05,'DQ.OE.02':.05,'DO.OE.02':.10,'DSI.OE.01':.05,'RMD.OE.01':.10,'OD.OE.01':.15,'OD.OE.05':.05,'MCM.OE.01':.05,'MCM.OE.02':.05,'MCM.OE.03':.05,'DSI.OE.05':.05,'DQ.OE.03':.05}
 for m in metrics: m['round3Weight']=W.get(m['code'])
 # ---- NDI cleanup
 LV={0:'Absence of Capabilities',1:'Establishing',2:'Defined',3:'Activated',4:'Managed',5:'Pioneer'}
+def groups(lines):
+    g=[]
+    for raw in lines:
+        t=cl(raw); r=raw.strip()
+        if not t: continue
+        if r.startswith(('\uf0b7','\u2022')) or (r.startswith('-') and g):
+            if g: g[-1]['points'].append(t)
+            continue
+        g.append({'text':t,'points':[]})
+    return g
 def cl(x): 
     x=x.replace('\uf0b7','').replace('\u2022','').strip(' -•'); x=re.split(r'Has the entity|Maturity Questions',x)[0]; return clean(x)
 mq={}
@@ -31,7 +41,9 @@ for k,q in ndi['questions'].items():
     lv={}
     for L,e in ndi['evidence'].get(k,{}).items():
         ev=[cl(i) for i in e['evidence'] if cl(i) and not cl(i).lower().startswith('all level')]
-        lv[L]={'name':LV[int(L)],'evidence':ev,'criteria':[cl(c) for c in e['criteria'] if cl(c)]}
+        gs=groups(e['criteria'])
+        pair=len(gs)==len(ev)
+        lv[L]={'name':LV[int(L)],'items':[{'evidence':x,'criteria':(gs[i] if pair else None)} for i,x in enumerate(ev)],'loose':([] if pair else gs)}
     mq[k]={'code':k,'question':q,'levels':lv}
 # ---- recommended-practice methodology templates (NOT official NDMO content)
 T={

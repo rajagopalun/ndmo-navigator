@@ -1,16 +1,14 @@
-import { useState, useMemo } from 'react'
-import { domains, controls, specifications } from './ndmoData.js'
-import TopBar from './components/TopBar.jsx'; import DomainTabs from './components/DomainTabs.jsx'
-import ControlList from './components/ControlList.jsx'; import SpecDetail from './components/SpecDetail.jsx'
-export default function App() {
-  const [domain, setDomain] = useState(domains[0].id); const [openControl, setOpenControl] = useState(null); const [specId, setSpecId] = useState(null)
-  const dControls = useMemo(() => controls.filter(c => c.domain === domain), [domain])
-  const spec = specifications.find(s => s.id === specId)
-  const pick = r => { setDomain(r.domain); setOpenControl(r.control || null); setSpecId(r.spec || null) }
-  const selectDomain = id => { setDomain(id); setOpenControl(null); setSpecId(null) }
-  return (<div className="min-h-screen"><TopBar onPick={pick} /><DomainTabs domains={domains} active={domain} onSelect={selectDomain} />
-    <main className="mx-auto grid max-w-7xl gap-6 px-4 py-6 lg:grid-cols-[22rem_1fr]">
-      <div>{dControls.length ? <ControlList controls={dControls} specs={specifications} openControl={openControl} onToggle={id => setOpenControl(o => o === id ? null : id)} selectedSpec={specId} onSelectSpec={setSpecId} />
-        : <p className="rounded-lg border bg-white p-4 text-sm text-slate-600">This domain’s controls and specifications are issued by the National Cybersecurity Authority (NCA); the NDMO standards document does not list them.</p>}</div>
-      <SpecDetail key={specId} spec={spec} control={controls.find(c => c.id === spec?.control)} /></main></div>)
+import { useState } from 'react'
+import { AppProvider, useApp } from './lib/store.jsx'
+import { first } from './lib/nav.js'
+import Login from './components/Login.jsx'; import TopBar from './components/TopBar.jsx'; import Workspace from './components/Workspace.jsx'
+import Dashboard from './components/Dashboard.jsx'; import Profile from './components/Profile.jsx'
+function Shell() {
+  const { user } = useApp(), [tab, setTab] = useState('ndmo'), [sel, setSel] = useState({ ndmo: first('ndmo'), ndi: first('ndi'), oe: first('oe') })
+  const go = n => { setTab(n.mode); setSel(s => ({ ...s, [n.mode]: n.id })); window.scrollTo(0, 0) }
+  if (!user) return <Login />
+  return (<div className="min-h-screen"><TopBar tab={tab} setTab={setTab} go={go} />
+    {['ndmo', 'ndi', 'oe'].includes(tab) && <Workspace mode={tab} selId={sel[tab]} go={go} />}
+    {tab === 'dash' && <Dashboard go={go} />}{tab === 'profile' && <Profile />}</div>)
 }
+export default function App() { return <AppProvider><Shell /></AppProvider> }

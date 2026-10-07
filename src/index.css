@@ -1,3 +1,5 @@
 @tailwind base; @tailwind components; @tailwind utilities;
+:root{--brand:#006C35;--brand-dark:#004f27;--brand-light:#e3f1e9}
 body{@apply bg-slate-50 text-slate-800 antialiased}
-:focus-visible{outline:2px solid #006C35;outline-offset:2px}
+:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
+input[type=checkbox]{accent-color:var(--brand)}

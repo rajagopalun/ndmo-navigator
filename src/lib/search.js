@@ -1,20 +1,18 @@
 import { domains, controls, specifications, maturityQuestions, oeMetrics } from '../ndmoData.js'
+import { firstLevel, specsOfControl } from './nav.js'
+const sp = s => ({ mode: 'ndmo', id: s.id })
 const items = [
-  ...domains.map(d => ({ type:'Domain', id:d.id, title:d.name, sub:d.id, domain:d.id, hay:`${d.id} ${d.name}` })),
-  ...controls.map(c => ({ type:'Control', id:c.id, title:c.name, sub:c.id, domain:c.domain, control:c.id, hay:`${c.id} ${c.name} ${c.description}` })),
-  ...specifications.map(s => ({ type:'Specification', id:s.id, title:s.name, sub:s.id, domain:s.id.split('.')[0], control:s.control, spec:s.id, hay:`${s.id} ${s.name} ${s.text}` })),
-  ...Object.values(maturityQuestions).map(q => ({ type:'NDI Question', id:q.code, title:q.question, sub:q.code, domain:q.code.split('.')[0],
-    spec:specifications.find(s => s.ndi.some(n => n.mq === q.code))?.id, hay:`${q.code} ${q.question}` })),
-  ...oeMetrics.map(m => ({ type:'NDI OE Metric', id:m.code, title:m.name, sub:`${m.code} · ${m.platform}`, domain:m.domain, hay:`${m.code} ${m.name} ${m.platform}` })),
-]
-export function search(q, limit = 8) {
-  const terms = q.toLowerCase().split(/\s+/).filter(Boolean); if (!terms.length) return {}
-  const out = {}
-  for (const it of items) {
-    const h = it.hay.toLowerCase(); if (!terms.every(t => h.includes(t))) continue
-    const score = (it.id.toLowerCase() === q.toLowerCase() ? 100 : 0) + (it.title.toLowerCase().includes(terms[0]) ? 5 : 0)
-    ;(out[it.type] ||= []).push({ ...it, score })
-  }
-  for (const k in out) out[k] = out[k].sort((a, b) => b.score - a.score).slice(0, limit)
+  ...domains.map(d => ({ type: 'Domain', sub: d.id, title: d.name, hay: `${d.id} ${d.name}`, nav: (s => s && sp(s))(specifications.find(x => x.id.startsWith(d.id + '.'))) })),
+  ...controls.map(c => ({ type: 'Control', sub: c.id, title: c.name, hay: `${c.id} ${c.name} ${c.description}`, nav: (s => s && sp(s))(specsOfControl(c.id)[0]) })),
+  ...specifications.map(s => ({ type: 'NDMO Specification', sub: s.id, title: s.name, hay: `${s.id} ${s.name} ${s.text}`, nav: sp(s) })),
+  ...Object.values(maturityQuestions).map(q => ({ type: 'NDI Question', sub: q.code, title: q.question, hay: `${q.code} ${q.question}`, nav: { mode: 'ndi', id: `${q.code}|${firstLevel(q.code)}` } })),
+  ...Object.values(maturityQuestions).flatMap(q => Object.entries(q.levels).flatMap(([l, lv]) => lv.items.map(it => ({ type: 'NDI Evidence', sub: `${q.code} · L${l}`, title: it.evidence, hay: `${q.code} ${it.evidence} ${it.criteria?.text || ''}`, nav: { mode: 'ndi', id: `${q.code}|${l}` } })))),
+  ...oeMetrics.map(m => ({ type: 'NDI OE Metric', sub: `${m.code} · ${m.platform}`, title: m.name, hay: `${m.code} ${m.name} ${m.platform}`, nav: { mode: 'oe', id: m.code } })),
+].filter(i => i.nav)
+export function search(q, limit = 6) {
+  const terms = q.toLowerCase().split(/\s+/).filter(Boolean), out = {}
+  if (!terms.length) return out
+  for (const it of items) { const h = it.hay.toLowerCase(); if (terms.every(t => h.includes(t))) (out[it.type] ||= []).push(it) }
+  for (const k in out) out[k] = out[k].slice(0, limit)
   return out
 }
