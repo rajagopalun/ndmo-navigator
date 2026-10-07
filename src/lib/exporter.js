@@ -21,3 +21,5 @@ ${Object.entries(groups).map(([g, rs]) => `<h2>${esc(g)}</h2><table><tr><th>Item
   const w = window.open('', '_blank'); if (!w) return alert('Please allow pop-ups, then click Export again.')
   w.document.write(html); w.document.close()
 }
+
+export const download = (name, text, type = 'text/csv') => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click() }
