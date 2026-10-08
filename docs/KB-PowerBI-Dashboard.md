@@ -98,3 +98,7 @@ Cumulative Completed = CALCULATE([Completed], FILTER(ALL(Calendar[Date]), Calend
 - Submitted Month
 - Due Month
 - Key
+- Workflow Status
+- Reviewer
+- Attachments
+- Percent Complete

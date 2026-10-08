@@ -1,5 +1,5 @@
 export const KB_TITLE = 'KB: Build the Compliance Tracker dashboard in Power BI'
-export const HEAD = ['Type', 'Domain', 'Domain Name', 'Group', 'Item', 'Priority / Level', 'Status', 'Submitted Date', 'Due Date', 'Owner', 'Evidence Ref', 'Notes', 'Submitted Month', 'Due Month', 'Key']
+export const HEAD = ['Type', 'Domain', 'Domain Name', 'Group', 'Item', 'Priority / Level', 'Status', 'Submitted Date', 'Due Date', 'Owner', 'Evidence Ref', 'Notes', 'Submitted Month', 'Due Month', 'Key', 'Workflow Status', 'Reviewer', 'Attachments', 'Percent Complete']
 export const DAX = `Total Items = COUNTROWS(Tracker)
 Completed = CALCULATE([Total Items], Tracker[Live Status] = "Completed")
 Pending = CALCULATE([Total Items], Tracker[Live Status] = "Pending")

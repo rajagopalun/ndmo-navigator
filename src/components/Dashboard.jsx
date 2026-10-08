@@ -10,11 +10,11 @@ const Kpi = ({ l, v, c }) => <div className="rounded-lg border bg-white p-3"><p 
 const Box = ({ title, empty, children }) => <div className="rounded-lg border bg-white p-3"><p className="mb-2 text-sm font-semibold">{title}</p><div className="h-64">{empty ? <p className="pt-20 text-center text-sm text-slate-400">No data yet – tick items or set due dates.</p> : <ResponsiveContainer>{children}</ResponsiveContainer>}</div></div>
 const grp = (arr, fn) => { const m = {}; arr.forEach(i => { const k = fn(i); (m[k] ||= { name: k, Completed: 0, Pending: 0, Overdue: 0 })[i.status]++ }); return Object.values(m).sort((a, b) => a.name.localeCompare(b.name)) }
 export default function Dashboard({ go, sub, setSub }) {
-  const app = useApp(), { progress, profile } = app, [f, setF] = useState({ domain: '', status: '', tag: '', owner: '', from: '', to: '', q: '' })
+  const app = useApp(), { progress, profile, nodes } = app, [f, setF] = useState({ kind: '', domain: '', status: '', tag: '', owner: '', from: '', to: '', q: '' })
   const t = new Date().toISOString().slice(0, 10), soon = new Date(Date.now() + 14 * 864e5).toISOString().slice(0, 10)
-  const all = useMemo(() => universe().map(i => { const p = progress[i.key] || {}; return { ...i, p, status: p.done ? 'Completed' : p.due && p.due < t ? 'Overdue' : 'Pending' } }), [progress, t])
+  const all = useMemo(() => universe().map(i => { const p = progress[i.key] || {}; return { ...i, p, status: p.done ? 'Completed' : p.due && p.due < t ? 'Overdue' : 'Pending' } }), [progress, t, nodes])
   const base = all.filter(i => ['all', 'table', 'pbi'].includes(sub) || i.kind === sub), uniq = fn => [...new Set(base.map(fn).filter(Boolean))].sort()
-  const items = base.filter(i => (!f.domain || i.domain === f.domain) && (!f.status || i.status === f.status) && (!f.tag || i.tag === f.tag) && (!f.owner || i.p.owner === f.owner) && (!f.from || (i.p.due || '') >= f.from) && (!f.to || (i.p.due && i.p.due <= f.to)) && (!f.q || i.title.toLowerCase().includes(f.q.toLowerCase())))
+  const items = base.filter(i => (!f.kind || i.kind === f.kind) && (!f.domain || i.domain === f.domain) && (!f.status || i.status === f.status) && (!f.tag || i.tag === f.tag) && (!f.owner || i.p.owner === f.owner) && (!f.from || (i.p.due || '') >= f.from) && (!f.to || (i.p.due && i.p.due <= f.to)) && (!f.q || i.title.toLowerCase().includes(f.q.toLowerCase())))
   const n = s => items.filter(i => i.status === s).length, total = items.length, pct = total ? Math.round(n('Completed') * 100 / total) : 0
   const C = { Completed: profile.color || '#006C35', Pending: '#94a3b8', Overdue: '#dc2626' }
   const pie = ['Completed', 'Pending', 'Overdue'].map(name => ({ name, value: n(name) })).filter(x => x.value)
@@ -26,19 +26,20 @@ export default function Dashboard({ go, sub, setSub }) {
     const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob(['\ufeff' + rows.map(r => r.map(q).join(',')).join('\n')], { type: 'text/csv' })); a.download = 'compliance-tracker.csv'; a.click() }
   const sel = 'rounded border px-2 py-1.5 text-sm'
   return (<div className="mx-auto grid max-w-[1500px] gap-4 px-4 py-4 lg:grid-cols-[12rem_minmax(0,1fr)]">
-    <aside className="rounded-lg border bg-white p-2 lg:self-start">{SUBS.map(([k, l]) => <button key={k} onClick={() => { setSub(k); setF({ domain: '', status: '', tag: '', owner: '', from: '', to: '', q: '' }) }} className={`block w-full rounded px-3 py-2 text-left text-sm ${sub === k ? 'bg-ksa text-white' : 'hover:bg-slate-100'}`}>{l}</button>)}</aside>
+    <aside className="rounded-lg border bg-white p-2 lg:self-start">{SUBS.map(([k, l]) => <button key={k} onClick={() => { setSub(k); setF({ kind: '', domain: '', status: '', tag: '', owner: '', from: '', to: '', q: '' }) }} className={`block w-full rounded px-3 py-2 text-left text-sm ${sub === k ? 'bg-ksa text-white' : 'hover:bg-slate-100'}`}>{l}</button>)}</aside>
     <div className="min-w-0 space-y-4">
       <p className="text-sm text-slate-500">Dashboard <span aria-hidden>›</span> <b className="text-slate-800">{SUBS.find(s => s[0] === sub)[1]}</b></p>
       {sub === 'pbi' ? <PowerBi all={all} profile={profile} /> : <>
       <div className="flex flex-wrap items-end gap-2 rounded-lg border bg-white p-3">
         <input placeholder="Search items…" value={f.q} onChange={e => set('q', e.target.value)} className={sel + ' w-44'} />
+        {['all', 'table'].includes(sub) && <select aria-label="Type" value={f.kind} onChange={e => set('kind', e.target.value)} className={sel}><option value="">NDMO + NDI + NDI OE</option><option value="NDMO">NDMO</option><option value="NDI">NDI maturity</option><option value="OE">NDI OE</option></select>}
         <select aria-label="Domain" value={f.domain} onChange={e => set('domain', e.target.value)} className={sel}><option value="">All domains</option>{uniq(i => i.domain).map(x => <option key={x}>{x}</option>)}</select>
         <select aria-label="Status" value={f.status} onChange={e => set('status', e.target.value)} className={sel}><option value="">All status</option><option>Completed</option><option>Pending</option><option>Overdue</option></select>
         <select aria-label="Priority / level / platform" value={f.tag} onChange={e => set('tag', e.target.value)} className={sel}><option value="">Priority / level / platform</option>{uniq(i => i.tag).map(x => <option key={x}>{x}</option>)}</select>
         <select aria-label="Owner" value={f.owner} onChange={e => set('owner', e.target.value)} className={sel}><option value="">All owners</option>{uniq(i => i.p.owner).map(x => <option key={x}>{x}</option>)}</select>
         <label className="text-xs">Due from<input type="date" value={f.from} onChange={e => set('from', e.target.value)} className={sel + ' block'} /></label>
         <label className="text-xs">Due to<input type="date" value={f.to} onChange={e => set('to', e.target.value)} className={sel + ' block'} /></label>
-        <button onClick={() => setF({ domain: '', status: '', tag: '', owner: '', from: '', to: '', q: '' })} className="text-sm text-ksa underline">Clear</button>
+        <button onClick={() => setF({ kind: '', domain: '', status: '', tag: '', owner: '', from: '', to: '', q: '' })} className="text-sm text-ksa underline">Clear</button>
         <span className="ml-auto flex gap-2"><button onClick={csv} className="rounded border border-ksa px-3 py-1.5 text-sm text-ksa">CSV</button>
           <button onClick={() => exportReport({ title: `Compliance status – ${SUBS.find(s => s[0] === sub)[1]}`, items, ...app })} className="flex items-center gap-1 rounded bg-ksa px-3 py-1.5 text-sm text-white"><FileDown size={15} />PDF</button></span></div>
       <div className="grid grid-cols-2 gap-3 md:grid-cols-6"><Kpi l="Total items" v={total} /><Kpi l="Completed" v={n('Completed')} c="text-ksa" /><Kpi l="Pending" v={n('Pending')} /><Kpi l="Overdue" v={n('Overdue')} c="text-red-600" /><Kpi l="Due in 14 days" v={items.filter(i => !i.p.done && i.p.due >= t && i.p.due <= soon).length} c="text-amber-600" /><Kpi l="Completion" v={pct + '%'} /></div>
@@ -52,5 +53,6 @@ export default function Dashboard({ go, sub, setSub }) {
         <Box title="Items due by month (not yet completed)" empty={!dueM.length}><BarChart data={dueM}><CartesianGrid strokeDasharray="3 3" /><XAxis dataKey="name" fontSize={11} /><YAxis allowDecimals={false} /><Tooltip /><Legend /><Bar dataKey="Pending" stackId="a" fill={C.Pending} /><Bar dataKey="Overdue" stackId="a" fill={C.Overdue} /></BarChart></Box></div>
       <div className="overflow-auto rounded-lg border bg-white p-3"><p className="mb-2 text-sm font-semibold">Overdue and due within 14 days</p>
         {!upcoming.length ? <p className="text-sm text-slate-400">Nothing due. Set due dates on items (Details link) to see them here.</p> : <table className="w-full text-left text-sm"><thead><tr className="border-b text-xs text-slate-500"><th className="py-1">Due</th><th>Status</th><th>Item</th><th>Owner</th><th /></tr></thead><tbody>{upcoming.map(i => <tr key={i.key} className="border-b"><td className="py-1">{i.p.due}</td><td className={i.status === 'Overdue' ? 'text-red-600' : ''}>{i.status}</td><td className="max-w-md truncate" title={i.title}>{i.kind} · {i.title}</td><td>{i.p.owner}</td><td><button onClick={() => go(i.nav)} className="text-ksa underline">Open</button></td></tr>)}</tbody></table>}</div></>}
+      {['NDMO', 'NDI', 'OE'].includes(sub) && <MetricsTable items={items} csv={csv} app={app} title={`Compliance metrics – ${SUBS.find(s => s[0] === sub)[1]}`} go={go} />}
     </>}</div></div>)
 }
