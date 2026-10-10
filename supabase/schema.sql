@@ -55,47 +55,8 @@ create or replace function _audit(who text, act text, det text default '') retur
 revoke execute on function _me(uuid), _need(uuid, text[]), _audit(text, text, text) from public, anon, authenticated;
 
 -- ---------- authentication ----------
-create or replace function app_login(p_username text, p_password text) returns json language plpgsql security definer set search_path = public, extensions as $$
-declare u app_users; t uuid;
-begin
-  select * into u from app_users where lower(username) = lower(p_username);
-  if not found then perform _audit(p_username, 'login_failed', 'unknown user'); return json_build_object('error', 'invalid_credentials'); end if;
-  if not u.active then return json_build_object('error', 'account_disabled'); end if;
-  if u.locked_until is not null and u.locked_until > now() then return json_build_object('error', 'account_locked'); end if;
-  if u.pass_hash <> crypt(p_password, u.pass_hash) then
-    update app_users set failed_attempts = failed_attempts + 1, locked_until = case when failed_attempts + 1 >= 5 then now() + interval '15 minutes' else null end where id = u.id;
-    perform _audit(u.username, 'login_failed', 'wrong password'); return json_build_object('error', 'invalid_credentials');
-  end if;
-  update app_users set failed_attempts = 0, locked_until = null, last_login = now() where id = u.id;
-  delete from app_sessions where expires_at < now();
-  insert into app_sessions (user_id, expires_at) values (u.id, now() + interval '12 hours') returning token into t;
-  perform _audit(u.username, 'login', '');
-  return json_build_object('token', t);
-end $$;
 create or replace function app_logout(tok uuid) returns void language sql security definer set search_path = public as $$ delete from app_sessions where token = tok $$;
-create or replace function app_change_password(tok uuid, old_pw text, new_pw text) returns void language plpgsql security definer set search_path = public, extensions as $$
-declare u app_users;
-begin
-  u := _me(tok);
-  if u.pass_hash <> crypt(old_pw, u.pass_hash) then raise exception 'wrong_password'; end if;
-  if length(new_pw) < 8 or new_pw = 'admin' then raise exception 'weak_password'; end if;
-  update app_users set pass_hash = crypt(new_pw, gen_salt('bf')), must_change = false where id = u.id;
-  perform _audit(u.username, 'password_changed', '');
-end $$;
-
 -- ---------- load everything the screen needs in one call ----------
-create or replace function app_get_state(tok uuid) returns json language plpgsql security definer set search_path = public, extensions as $$
-declare u app_users;
-begin
-  u := _me(tok);
-  return json_build_object(
-    'me', json_build_object('username', u.username, 'display_name', u.display_name, 'role', u.role, 'must_change', u.must_change),
-    'settings', coalesce((select json_object_agg(key, value) from app_settings), '{}'::json),
-    'progress', coalesce((select json_agg(x) from (select p.item_key, p.done, p.done_at, p.due, p.owner, p.reviewer, p.dept, p.wf, p.start_date, p.pct, p.ref, p.note, p.is_sample, p.updated_by,
-        (select count(*) from app_files f where f.item_key = p.item_key) as files from app_progress p) x), '[]'::json),
-    'nodes', coalesce((select json_agg(n order by n.sort, n.title) from app_nodes n), '[]'::json));
-end $$;
-
 -- ---------- tracking ----------
 create or replace function app_set_progress(tok uuid, k text, patch jsonb) returns void language plpgsql security definer set search_path = public, extensions as $$
 declare u app_users; cur app_progress; nwf text; ndone boolean; chg text;
@@ -133,32 +94,6 @@ begin
   select string_agg(x, ', ') into chg from jsonb_object_keys(patch) x where x in ('owner', 'reviewer', 'dept', 'due', 'start', 'ref', 'note', 'pct');
   if chg is not null then insert into app_history (item_key, username, event, detail) values (k, u.username, 'details', 'Updated: ' || chg); end if;
 end $$;
-create or replace function app_bulk_progress(tok uuid, p_rows jsonb, p_wipe boolean default false) returns int language plpgsql security definer set search_path = public, extensions as $$
-declare u app_users; n int;
-begin
-  u := _need(tok, array['admin']);
-  if p_wipe then delete from app_files where is_sample; delete from app_progress where is_sample; end if;
-  insert into app_progress (item_key, done, done_at, due, owner, reviewer, dept, wf, start_date, pct, ref, note, is_sample, updated_by)
-  select r->>'k', coalesce((r->>'done')::boolean, false), nullif(r->>'date', '')::timestamptz, nullif(r->>'due', '')::date, r->>'owner', r->>'reviewer', r->>'dept',
-         coalesce(r->>'wf', 'Not Started'), nullif(r->>'start', '')::date, coalesce((r->>'pct')::int, 0), r->>'ref', r->>'note', coalesce((r->>'sample')::boolean, true), u.username
-  from jsonb_array_elements(p_rows) r
-  on conflict (item_key) do update set done = excluded.done, done_at = excluded.done_at, due = excluded.due, owner = excluded.owner, reviewer = excluded.reviewer, dept = excluded.dept, wf = excluded.wf,
-    start_date = excluded.start_date, pct = excluded.pct, ref = excluded.ref, note = excluded.note, is_sample = excluded.is_sample, updated_by = excluded.updated_by, updated_at = now()
-  where app_progress.is_sample;   -- real (non-sample) data is never overwritten
-  get diagnostics n = row_count;
-  perform _audit(u.username, case when p_wipe then 'sample_populated' else 'bulk_import' end, n || ' rows');
-  return n;
-end $$;
-create or replace function app_clear(tok uuid, p_what text) returns void language plpgsql security definer set search_path = public, extensions as $$
-declare u app_users;
-begin
-  u := _need(tok, array['admin']);
-  if p_what = 'sample' then delete from app_files where is_sample; delete from app_progress where is_sample;
-  elsif p_what = 'all' then delete from app_files; delete from app_progress;
-  else raise exception 'bad_request'; end if;
-  perform _audit(u.username, 'cleared_' || p_what, '');
-end $$;
-
 -- ---------- evidence files ----------
 create or replace function app_add_file(tok uuid, k text, fname text, mime text, b64 text) returns bigint language plpgsql security definer set search_path = public, extensions as $$
 declare u app_users; fid bigint;
@@ -193,21 +128,6 @@ begin
 end $$;
 
 -- ---------- user management (admin only) ----------
-create or replace function app_list_users(tok uuid) returns json language plpgsql security definer set search_path = public as $$
-begin perform _need(tok, array['admin']);
-  return coalesce((select json_agg(json_build_object('id', id, 'username', username, 'display_name', display_name, 'role', role, 'active', active, 'locked', coalesce(locked_until > now(), false), 'last_login', last_login, 'created_at', created_at) order by username) from app_users), '[]'::json);
-end $$;
-create or replace function app_create_user(tok uuid, p_username text, p_display text, p_role text, p_password text) returns void language plpgsql security definer set search_path = public, extensions as $$
-declare a app_users;
-begin
-  a := _need(tok, array['admin']);
-  if p_username !~ '^[A-Za-z0-9._-]{3,40}$' then raise exception 'bad_username'; end if;
-  if length(p_password) < 8 then raise exception 'weak_password'; end if;
-  if p_role not in ('admin', 'contributor', 'viewer') then raise exception 'bad_role'; end if;
-  insert into app_users (username, display_name, role, pass_hash, must_change) values (p_username, p_display, p_role, crypt(p_password, gen_salt('bf')), true);
-  perform _audit(a.username, 'user_created', p_username || ' (' || p_role || ')');
-exception when unique_violation then raise exception 'username_taken';
-end $$;
 create or replace function app_update_user(tok uuid, p_uid uuid, p_display text, p_role text, p_active boolean, p_unlock boolean default false) returns void language plpgsql security definer set search_path = public as $$
 declare a app_users; t app_users;
 begin
@@ -243,14 +163,6 @@ begin perform _need(tok, array['admin']);
 end $$;
 
 -- ---------- branding / menu content (admin only) ----------
-create or replace function app_save_setting(tok uuid, p_key text, p_value jsonb) returns void language plpgsql security definer set search_path = public as $$
-declare a app_users;
-begin
-  a := _need(tok, array['admin']);
-  if p_key not in ('color', 'logo', 'seal', 'signature') then raise exception 'bad_request'; end if;
-  insert into app_settings (key, value) values (p_key, p_value) on conflict (key) do update set value = excluded.value;
-  perform _audit(a.username, 'setting_saved', p_key);
-end $$;
 create or replace function app_save_node(tok uuid, p_id uuid, p_parent uuid, p_mode text, p_title text, p_body text, p_sort int) returns uuid language plpgsql security definer set search_path = public as $$
 declare a app_users; nid uuid;
 begin
@@ -344,3 +256,199 @@ begin
   perform _audit(u.username, 'bulk_import_rows', n || ' updated, ' || cardinality(skipped) || ' skipped');
   return json_build_object('updated', n, 'skipped', to_json(skipped));
 end $$;
+
+-- =====================================================================
+-- v4: native + LDAP users, demo & sample users, editable library, header text
+-- =====================================================================
+alter table app_users add column if not exists auth_type text not null default 'native';
+alter table app_users add column if not exists is_sample boolean not null default false;
+create table if not exists app_docs (id uuid primary key default gen_random_uuid(), tag text not null, title text not null, version text, publisher text, descr text, filename text, mime text default 'application/pdf', size int, data text, url text, sort int default 0, updated_by text, updated_at timestamptz default now());
+alter table app_docs enable row level security;
+revoke all on app_docs from public, anon, authenticated;
+insert into app_docs (tag, title, version, publisher, descr, filename, url, sort)
+select * from (values
+ ('NDMO', 'National Data Management and Personal Data Protection Standards', 'Version 1.5', 'National Data Management Office (NDMO)', 'Controls and specifications for 15 data management and personal data protection domains.', 'NDMO.pdf', '/docs/NDMO.pdf', 1),
+ ('NDI', 'National Data Index (NDI)', 'Version 1.1', 'Saudi Data & AI Authority (SDAIA)', 'Maturity questions, assessment levels and acceptance-evidence checklists (Appendices I and II).', 'National-Data-Index_v1_0_EN.pdf', '/docs/National-Data-Index_v1_0_EN.pdf', 2),
+ ('NDI OE', 'National Data Index – Operational Excellence (OE)', 'Version 5.0 (document dated 18/11/2025)', 'Saudi Data & AI Authority (SDAIA)', 'Operational Excellence metrics, calculation approach and scale intervals.', 'OperationalExcellence-OE.pdf', '/docs/OperationalExcellence-OE.pdf', 3),
+ ('NDI OE', 'NDI Operational Excellence – Support Handbook', 'Version 6.0 (August 2026)', 'Saudi Data & AI Authority (SDAIA)', 'Questions and answers, examples and the metrics and weights targeted in the 2026 round.', 'FAQsforOperationalExcellence.pdf', '/docs/FAQsforOperationalExcellence.pdf', 4)
+) v where not exists (select 1 from app_docs);
+-- demo account: viewer, password Demo@123
+insert into app_users (username, display_name, role, pass_hash, must_change)
+select 'demo', 'Demo user', 'viewer', extensions.crypt('Demo@123', extensions.gen_salt('bf')), false where not exists (select 1 from app_users where username = 'demo');
+
+create or replace function app_login(p_username text, p_password text) returns json language plpgsql security definer set search_path = public, extensions as $$
+declare u app_users; t uuid;
+begin
+  select * into u from app_users where lower(username) = lower(p_username);
+  if not found then perform _audit(p_username, 'login_failed', 'unknown user'); return json_build_object('error', 'invalid_credentials'); end if;
+  if not u.active then return json_build_object('error', 'account_disabled'); end if;
+  if u.auth_type = 'ldap' then return json_build_object('error', 'use_ldap'); end if;
+  if u.locked_until is not null and u.locked_until > now() then return json_build_object('error', 'account_locked'); end if;
+  if u.pass_hash <> crypt(p_password, u.pass_hash) then
+    update app_users set failed_attempts = failed_attempts + 1, locked_until = case when failed_attempts + 1 >= 5 then now() + interval '15 minutes' else null end where id = u.id;
+    perform _audit(u.username, 'login_failed', 'wrong password'); return json_build_object('error', 'invalid_credentials');
+  end if;
+  update app_users set failed_attempts = 0, locked_until = null, last_login = now() where id = u.id;
+  delete from app_sessions where expires_at < now();
+  insert into app_sessions (user_id, expires_at) values (u.id, now() + interval '12 hours') returning token into t;
+  perform _audit(u.username, 'login', '');
+  return json_build_object('token', t);
+end $$;
+-- called only by the Vercel function /api/ldap-login after the directory accepted the password
+create or replace function app_ldap_session(p_username text, p_secret text) returns json language plpgsql security definer set search_path = public, extensions as $$
+declare u app_users; t uuid; s text;
+begin
+  select value into s from app_meta where key = 'ldap_secret';
+  if s is null or length(s) < 16 or p_secret is distinct from s then return json_build_object('error', 'not_allowed'); end if;
+  select * into u from app_users where lower(username) = lower(p_username) and auth_type = 'ldap' and active;
+  if not found then perform _audit(p_username, 'ldap_login_failed', 'not registered in tracker'); return json_build_object('error', 'user_not_registered'); end if;
+  update app_users set last_login = now() where id = u.id;
+  delete from app_sessions where expires_at < now();
+  insert into app_sessions (user_id, expires_at) values (u.id, now() + interval '12 hours') returning token into t;
+  perform _audit(u.username, 'login_ldap', '');
+  return json_build_object('token', t);
+end $$;
+create or replace function app_whoami(tok uuid) returns json language plpgsql security definer set search_path = public as $$
+declare u app_users;
+begin u := _me(tok); return json_build_object('role', u.role); end $$;
+create or replace function app_public_settings() returns json language sql security definer set search_path = public as $$
+  select coalesce(json_object_agg(key, value), '{}'::json) from app_settings where key in ('title', 'subtitle', 'logo', 'color') $$;
+
+create or replace function app_change_password(tok uuid, old_pw text, new_pw text) returns void language plpgsql security definer set search_path = public, extensions as $$
+declare u app_users;
+begin
+  u := _me(tok);
+  if u.auth_type = 'ldap' then raise exception 'ldap_user'; end if;
+  if u.pass_hash <> crypt(old_pw, u.pass_hash) then raise exception 'wrong_password'; end if;
+  if length(new_pw) < 8 or new_pw = 'admin' then raise exception 'weak_password'; end if;
+  update app_users set pass_hash = crypt(new_pw, gen_salt('bf')), must_change = false where id = u.id;
+  perform _audit(u.username, 'password_changed', '');
+end $$;
+create or replace function app_get_state(tok uuid) returns json language plpgsql security definer set search_path = public, extensions as $$
+declare u app_users;
+begin
+  u := _me(tok);
+  return json_build_object(
+    'me', json_build_object('username', u.username, 'display_name', u.display_name, 'role', u.role, 'must_change', u.must_change, 'auth_type', u.auth_type),
+    'settings', coalesce((select json_object_agg(key, value) from app_settings), '{}'::json),
+    'progress', coalesce((select json_agg(x) from (select p.item_key, p.done, p.done_at, p.due, p.owner, p.reviewer, p.dept, p.wf, p.start_date, p.pct, p.ref, p.note, p.is_sample, p.updated_by,
+        (select count(*) from app_files f where f.item_key = p.item_key) as files from app_progress p) x), '[]'::json),
+    'docs', coalesce((select json_agg(x) from (select id, tag, title, version, publisher, descr, filename, size, url, (data is not null) as has_data, updated_at from app_docs order by sort, title) x), '[]'::json),
+    'nodes', coalesce((select json_agg(n order by n.sort, n.title) from app_nodes n), '[]'::json));
+end $$;
+create or replace function app_list_users(tok uuid) returns json language plpgsql security definer set search_path = public as $$
+begin perform _need(tok, array['admin']);
+  return coalesce((select json_agg(json_build_object('id', id, 'username', username, 'display_name', display_name, 'role', role, 'active', active, 'auth_type', auth_type, 'is_sample', is_sample, 'locked', coalesce(locked_until > now(), false), 'last_login', last_login) order by username) from app_users), '[]'::json);
+end $$;
+drop function if exists app_create_user(uuid, text, text, text, text);
+create or replace function app_create_user(tok uuid, p_username text, p_display text, p_role text, p_password text, p_auth text default 'native') returns void language plpgsql security definer set search_path = public, extensions as $$
+declare a app_users;
+begin
+  a := _need(tok, array['admin']);
+  if p_username !~ '^[A-Za-z0-9._@-]{3,60}$' then raise exception 'bad_username'; end if;
+  if p_auth not in ('native', 'ldap') then raise exception 'bad_request'; end if;
+  if p_auth = 'native' and length(coalesce(p_password, '')) < 8 then raise exception 'weak_password'; end if;
+  if p_role not in ('admin', 'contributor', 'viewer') then raise exception 'bad_role'; end if;
+  insert into app_users (username, display_name, role, pass_hash, must_change, auth_type)
+  values (p_username, p_display, p_role, crypt(case when p_auth = 'ldap' then gen_random_uuid()::text else p_password end, gen_salt('bf')), p_auth = 'native', p_auth);
+  perform _audit(a.username, 'user_created', p_username || ' (' || p_role || ', ' || p_auth || ')');
+exception when unique_violation then raise exception 'username_taken';
+end $$;
+create or replace function app_delete_user(tok uuid, p_uid uuid) returns void language plpgsql security definer set search_path = public as $$
+declare a app_users; t app_users;
+begin
+  a := _need(tok, array['admin']);
+  select * into t from app_users where id = p_uid;
+  if not found then raise exception 'user_not_found'; end if;
+  if t.id = a.id then raise exception 'cannot_delete_self'; end if;
+  if t.role = 'admin' and (select count(*) from app_users where role = 'admin' and active and id <> p_uid) = 0 then raise exception 'last_admin'; end if;
+  delete from app_users where id = p_uid;
+  perform _audit(a.username, 'user_deleted', t.username);
+end $$;
+create or replace function app_save_setting(tok uuid, p_key text, p_value jsonb) returns void language plpgsql security definer set search_path = public as $$
+declare a app_users;
+begin
+  a := _need(tok, array['admin']);
+  if p_key not in ('color', 'logo', 'seal', 'signature', 'title', 'subtitle') then raise exception 'bad_request'; end if;
+  insert into app_settings (key, value) values (p_key, p_value) on conflict (key) do update set value = excluded.value;
+  perform _audit(a.username, 'setting_saved', p_key);
+end $$;
+
+-- sample users (contributors, password Demo@123) so sample records belong to real accounts
+create or replace function app_create_sample_users(tok uuid) returns json language plpgsql security definer set search_path = public, extensions as $$
+declare u app_users;
+begin
+  u := _need(tok, array['admin']);
+  insert into app_users (username, display_name, role, pass_hash, must_change, is_sample)
+  select v.n, v.d, 'contributor', crypt('Demo@123', gen_salt('bf')), false, true
+  from (values ('ahmed.qahtani', 'Ahmed Al-Qahtani'), ('sara.otaibi', 'Sara Al-Otaibi'), ('khalid.harbi', 'Khalid Al-Harbi'), ('noura.dossari', 'Noura Al-Dossari'), ('faisal.mutairi', 'Faisal Al-Mutairi'), ('layla.zahrani', 'Layla Al-Zahrani')) v(n, d)
+  on conflict (username) do nothing;
+  update app_users set active = true where is_sample;
+  perform _audit(u.username, 'sample_users_created', '');
+  return coalesce((select json_agg(json_build_object('username', username, 'display_name', display_name) order by username) from app_users where is_sample), '[]'::json);
+end $$;
+create or replace function app_bulk_progress(tok uuid, p_rows jsonb, p_wipe boolean default false) returns int language plpgsql security definer set search_path = public, extensions as $$
+declare u app_users; n int;
+begin
+  u := _need(tok, array['admin']);
+  if p_wipe then delete from app_history where item_key in (select item_key from app_progress where is_sample); delete from app_files where is_sample; delete from app_progress where is_sample; end if;
+  insert into app_progress (item_key, done, done_at, due, owner, reviewer, dept, wf, start_date, pct, ref, note, is_sample, updated_by)
+  select r->>'k', coalesce((r->>'done')::boolean, false), nullif(r->>'date', '')::timestamptz, nullif(r->>'due', '')::date, r->>'owner', r->>'reviewer', r->>'dept',
+         coalesce(r->>'wf', 'Not Started'), nullif(r->>'start', '')::date, coalesce((r->>'pct')::int, 0), r->>'ref', r->>'note', coalesce((r->>'sample')::boolean, true), coalesce(r->>'by', u.username)
+  from jsonb_array_elements(p_rows) r
+  on conflict (item_key) do update set done = excluded.done, done_at = excluded.done_at, due = excluded.due, owner = excluded.owner, reviewer = excluded.reviewer, dept = excluded.dept, wf = excluded.wf,
+    start_date = excluded.start_date, pct = excluded.pct, ref = excluded.ref, note = excluded.note, is_sample = excluded.is_sample, updated_by = excluded.updated_by, updated_at = now()
+  where app_progress.is_sample;   -- real (non-sample) data is never overwritten
+  get diagnostics n = row_count;
+  insert into app_history (item_key, username, event, detail, at)
+  select r->>'k', coalesce(r->>'by', u.username), 'status', 'In Progress → Evidence Submitted', coalesce(nullif(r->>'date', '')::timestamptz, now())
+  from jsonb_array_elements(p_rows) r where coalesce((r->>'done')::boolean, false) and coalesce((r->>'sample')::boolean, true);
+  insert into app_history (item_key, username, event, detail, at)
+  select r->>'k', coalesce(r->>'reviewer', u.username), 'status', 'Under Review → ' || (r->>'wf'), coalesce(nullif(r->>'date', '')::timestamptz, now()) + interval '1 day'
+  from jsonb_array_elements(p_rows) r where (r->>'wf') in ('Verified Compliant', 'Partially Compliant', 'Non-Compliant') and coalesce((r->>'sample')::boolean, true);
+  perform _audit(u.username, case when p_wipe then 'sample_populated' else 'bulk_import' end, n || ' rows');
+  return n;
+end $$;
+create or replace function app_clear(tok uuid, p_what text) returns void language plpgsql security definer set search_path = public, extensions as $$
+declare u app_users;
+begin
+  u := _need(tok, array['admin']);
+  if p_what = 'sample' then
+    delete from app_history where item_key in (select item_key from app_progress where is_sample);
+    delete from app_files where is_sample; delete from app_progress where is_sample;
+    delete from app_users where is_sample and id <> u.id;
+  elsif p_what = 'all' then
+    delete from app_history; delete from app_files; delete from app_progress;
+    delete from app_users where username not in ('admin', 'demo') and id <> u.id;
+    insert into app_users (username, display_name, role, pass_hash, must_change) values ('demo', 'Demo user', 'viewer', crypt('Demo@123', gen_salt('bf')), false) on conflict (username) do nothing;
+    update app_users set role = 'viewer', active = true, auth_type = 'native', pass_hash = crypt('Demo@123', gen_salt('bf')), must_change = false, is_sample = false, failed_attempts = 0, locked_until = null where username = 'demo';
+  else raise exception 'bad_request'; end if;
+  perform _audit(u.username, 'cleared_' || p_what, '');
+end $$;
+
+-- editable regulatory library (admin)
+create or replace function app_get_doc(tok uuid, p_id uuid) returns json language plpgsql security definer set search_path = public as $$
+begin perform _me(tok);
+  return (select json_build_object('filename', filename, 'mime', mime, 'data', data) from app_docs where id = p_id);
+end $$;
+create or replace function app_save_doc(tok uuid, p_id uuid, p_tag text, p_title text, p_version text, p_publisher text, p_descr text, p_filename text, p_mime text, p_data text, p_sort int default 0) returns uuid language plpgsql security definer set search_path = public as $$
+declare a app_users; nid uuid;
+begin
+  a := _need(tok, array['admin']);
+  if p_tag not in ('NDMO', 'NDI', 'NDI OE') then raise exception 'bad_request'; end if;
+  if p_data is not null and length(p_data) > 8500000 then raise exception 'file_too_large'; end if;
+  if p_id is null then
+    insert into app_docs (tag, title, version, publisher, descr, filename, mime, size, data, sort, updated_by)
+    values (p_tag, p_title, p_version, p_publisher, p_descr, p_filename, p_mime, case when p_data is null then null else (length(p_data) * 3 / 4)::int end, p_data, coalesce(p_sort, 0), a.username) returning id into nid;
+  else
+    update app_docs set tag = p_tag, title = p_title, version = p_version, publisher = p_publisher, descr = p_descr,
+      filename = case when p_data is not null then p_filename else filename end, mime = case when p_data is not null then p_mime else mime end,
+      size = case when p_data is not null then (length(p_data) * 3 / 4)::int else size end, url = case when p_data is not null then null else url end,
+      data = coalesce(p_data, data), updated_by = a.username, updated_at = now() where id = p_id returning id into nid;
+  end if;
+  perform _audit(a.username, 'library_doc_saved', p_title);
+  return nid;
+end $$;
+create or replace function app_delete_doc(tok uuid, p_id uuid) returns void language plpgsql security definer set search_path = public as $$
+declare a app_users;
+begin a := _need(tok, array['admin']); delete from app_docs where id = p_id; perform _audit(a.username, 'library_doc_deleted', p_id::text); end $$;

@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { useApp } from '../lib/store.jsx'
-const M = { wrong_password: 'Current password is wrong', weak_password: 'New password must be at least 8 characters and not “admin”' }
+const M = { ldap_user: 'Directory (AD / LDAP) accounts change their password in the directory.', wrong_password: 'Current password is wrong', weak_password: 'New password must be at least 8 characters and not “admin”' }
 export default function Profile({ forced }) {
   const { me, call, refresh, logout } = useApp(), [o, setO] = useState(''), [n, setN] = useState(''), [n2, setN2] = useState(''), [msg, setMsg] = useState('')
   const go = async () => { if (n !== n2) return setMsg('New passwords do not match'); try { await call('app_change_password', { old_pw: o, new_pw: n }); setMsg('Password changed'); setO(''); setN(''); setN2(''); refresh() } catch (e) { setMsg(M[e.message] || e.message) } }
