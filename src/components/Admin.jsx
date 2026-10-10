@@ -9,11 +9,13 @@ const ERR = { username_taken: 'That username already exists', last_admin: 'At le
 const run = async fn => { try { return await fn() } catch (e) { alert(ERR[e.message] || e.message) } }
 const rnd = (a, b) => Math.floor(a + Math.random() * (b - a + 1)), pick = a => a[rnd(0, a.length - 1)], day = o => new Date(Date.now() + o * 864e5).toISOString()
 const NAMES = ['Ahmed Al-Qahtani', 'Sara Al-Otaibi', 'Khalid Al-Harbi', 'Noura Al-Dossari', 'Faisal Al-Mutairi', 'Layla Al-Zahrani']
+const DEPTS = ['Data Governance Office', 'IT', 'Legal & Compliance', 'Risk', 'Operations']
 const makeSample = (items, pct) => items.map((i, n) => {
-  const owner = pick(NAMES), reviewer = pick(NAMES)
-  if (Math.random() * 100 < pct) { const o = -rnd(1, 120); return { k: i.key, done: true, date: day(o), due: day(o + rnd(-7, 10)).slice(0, 10), start: day(o - rnd(5, 30)).slice(0, 10), owner, reviewer, wf: 'Completed', pct: 100, ref: `EV-${1000 + n}`, note: 'Sample data', sample: true } }
-  const wf = pick(['In progress', 'In progress', 'In review', 'Not started', 'Not started', 'Blocked']), od = Math.random() < .35
-  return { k: i.key, done: false, due: day(od ? -rnd(1, 45) : rnd(1, 75)).slice(0, 10), start: day(-rnd(1, 40)).slice(0, 10), owner, reviewer, wf, pct: wf === 'Not started' ? 0 : rnd(10, 80), ref: '', note: 'Sample data', sample: true }
+  const owner = pick(NAMES), reviewer = pick(NAMES), dept = pick(DEPTS)
+  if (Math.random() * 100 < pct) { const o = -rnd(1, 120), r = Math.random(), wf = r < .2 ? 'Evidence Submitted' : r < .4 ? 'Under Review' : r < .85 ? 'Verified Compliant' : r < .95 ? 'Partially Compliant' : 'Non-Compliant'
+    return { k: i.key, done: true, date: day(o), due: day(o + rnd(-7, 10)).slice(0, 10), start: day(o - rnd(5, 30)).slice(0, 10), owner, reviewer, dept, wf, pct: 100, ref: `EV-${1000 + n}`, note: 'Sample data', sample: true } }
+  const wf = pick(['In Progress', 'In Progress', 'Not Started', 'Not Started']), od = Math.random() < .35
+  return { k: i.key, done: false, due: day(od ? -rnd(1, 45) : rnd(1, 75)).slice(0, 10), start: day(-rnd(1, 40)).slice(0, 10), owner, reviewer, dept, wf, pct: wf === 'Not Started' ? 0 : rnd(10, 80), ref: '', note: 'Sample data', sample: true }
 })
 function Users() {
   const { call } = useApp(), [list, setList] = useState([]), [f, setF] = useState({ u: '', d: '', r: 'contributor', p: '' }), load = () => call('app_list_users').then(setList).catch(e => alert(e.message)); useEffect(() => { load() }, [])

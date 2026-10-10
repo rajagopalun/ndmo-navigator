@@ -30,3 +30,5 @@ export const siblingIds = (nodes, id) => { for (const n of nodes) { if (n.id ===
 export const branchIds = nodes => nodes.flatMap(n => n.children ? [n.id, ...branchIds(n.children)] : [])
 const firstLeaf = n => n.leaf ? n : firstLeaf(n.children[0])
 export const menuFor = (mode, nodes = []) => buildTree(mode, nodes).map(d => ({ id: d.id, label: d.label, nav: { mode, id: firstLeaf(d).id } }))
+export const findNode = (nodes, id) => { for (const n of nodes) { if (n.id === id) return n; const r = n.children && findNode(n.children, id); if (r) return r } return null }
+export const pathTo = (nodes, id) => { for (const n of nodes) { if (n.id === id) return [n]; const r = n.children && pathTo(n.children, id); if (r) return [n, ...r] } return null }

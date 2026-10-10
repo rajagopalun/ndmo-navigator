@@ -10,16 +10,25 @@ create table if not exists app_users (
 create table if not exists app_sessions (token uuid primary key default gen_random_uuid(), user_id uuid not null references app_users(id) on delete cascade, expires_at timestamptz not null);
 create table if not exists app_settings (key text primary key, value jsonb);
 create table if not exists app_progress (
-  item_key text primary key, done boolean not null default false, done_at timestamptz, due date, owner text, reviewer text,
-  wf text not null default 'Not started', start_date date, pct int not null default 0, ref text, note text,
+  item_key text primary key, done boolean not null default false, done_at timestamptz, due date, owner text, reviewer text, dept text,
+  wf text not null default 'Not Started', start_date date, pct int not null default 0, ref text, note text,
   is_sample boolean not null default false, updated_by text, updated_at timestamptz not null default now());
 create table if not exists app_files (id bigserial primary key, item_key text not null, filename text not null, mime text, size int, data text not null, uploaded_by text, uploaded_at timestamptz default now(), is_sample boolean default false);
 create index if not exists app_files_key on app_files(item_key);
 create table if not exists app_nodes (id uuid primary key default gen_random_uuid(), parent_id uuid references app_nodes(id) on delete cascade, mode text not null check (mode in ('ndmo','ndi','oe')), title text not null, body text default '', sort int default 0, created_by text, updated_at timestamptz default now());
 create table if not exists app_audit (id bigserial primary key, at timestamptz default now(), username text, action text, detail text);
 create table if not exists app_meta (key text primary key, value text);
+-- v3 additions (safe to re-run)
+alter table app_progress add column if not exists dept text;
+create table if not exists app_history (id bigserial primary key, at timestamptz default now(), item_key text not null, username text, event text, detail text);
+create index if not exists app_history_key on app_history(item_key);
+alter table app_history enable row level security;
+revoke all on app_history from public, anon, authenticated;
+update app_progress set wf = case wf when 'Not Started' then 'Not Started' when 'In progress' then 'In Progress' when 'In review' then 'Under Review' when 'Completed' then 'Verified Compliant' when 'Blocked' then 'In Progress' else wf end
+  where wf in ('Not Started', 'In progress', 'In review', 'Completed', 'Blocked');
+alter table app_progress alter column wf set default 'Not Started';
 -- future upgrades: add new columns here with "alter table ... add column if not exists ..."
-insert into app_meta values ('schema_version','2') on conflict (key) do update set value = excluded.value;
+insert into app_meta values ('schema_version','3') on conflict (key) do update set value = excluded.value;
 
 alter table app_users enable row level security; alter table app_sessions enable row level security; alter table app_settings enable row level security;
 alter table app_progress enable row level security; alter table app_files enable row level security; alter table app_nodes enable row level security;
@@ -82,48 +91,58 @@ begin
   return json_build_object(
     'me', json_build_object('username', u.username, 'display_name', u.display_name, 'role', u.role, 'must_change', u.must_change),
     'settings', coalesce((select json_object_agg(key, value) from app_settings), '{}'::json),
-    'progress', coalesce((select json_agg(x) from (select p.item_key, p.done, p.done_at, p.due, p.owner, p.reviewer, p.wf, p.start_date, p.pct, p.ref, p.note, p.is_sample, p.updated_by,
+    'progress', coalesce((select json_agg(x) from (select p.item_key, p.done, p.done_at, p.due, p.owner, p.reviewer, p.dept, p.wf, p.start_date, p.pct, p.ref, p.note, p.is_sample, p.updated_by,
         (select count(*) from app_files f where f.item_key = p.item_key) as files from app_progress p) x), '[]'::json),
     'nodes', coalesce((select json_agg(n order by n.sort, n.title) from app_nodes n), '[]'::json));
 end $$;
 
 -- ---------- tracking ----------
 create or replace function app_set_progress(tok uuid, k text, patch jsonb) returns void language plpgsql security definer set search_path = public, extensions as $$
-declare u app_users; fin boolean := coalesce((patch->>'done')::boolean, false);
+declare u app_users; cur app_progress; nwf text; ndone boolean; chg text;
 begin
   u := _need(tok, array['admin', 'contributor']);
-  if (patch ? 'done') and fin and not exists (select 1 from app_files where item_key = k)
-     and coalesce(nullif(coalesce(patch->>'ref', (select ref from app_progress where item_key = k)), ''), '') = '' then
-    raise exception 'evidence_required';
-  end if;
   insert into app_progress (item_key) values (k) on conflict do nothing;
-  update app_progress set
-    done_at = case when (patch ? 'date') and (done or fin) then (patch->>'date')::timestamptz
-                   when (patch ? 'done') and fin then coalesce(done_at, now())
-                   when (patch ? 'done') then null else done_at end,
-    done = case when patch ? 'done' then fin else done end,
-    wf = case when (patch ? 'done') and fin then 'Completed' when (patch ? 'done') and wf = 'Completed' then 'In progress' else coalesce(patch->>'wf', wf) end,
-    pct = case when (patch ? 'done') and fin then 100 else coalesce(nullif(patch->>'pct', '')::int, pct) end,
+  select * into cur from app_progress where item_key = k;
+  nwf := cur.wf;
+  if patch ? 'wf' then nwf := patch->>'wf';
+  elsif patch ? 'done' then
+    if (patch->>'done')::boolean then nwf := case when cur.wf in ('Not Started', 'In Progress') then 'Evidence Submitted' else cur.wf end; else nwf := 'In Progress'; end if;
+  end if;
+  if nwf not in ('Not Started', 'In Progress', 'Evidence Submitted', 'Under Review', 'Verified Compliant', 'Partially Compliant', 'Non-Compliant') then raise exception 'bad_status'; end if;
+  ndone := nwf not in ('Not Started', 'In Progress');
+  if ndone and not cur.done and not exists (select 1 from app_files where item_key = k) and coalesce(nullif(coalesce(patch->>'ref', cur.ref), ''), '') = '' then raise exception 'evidence_required'; end if;
+  if nwf in ('Verified Compliant', 'Partially Compliant', 'Non-Compliant') and nwf <> cur.wf and u.role <> 'admin' and lower(coalesce(cur.reviewer, '')) <> lower(u.username) then raise exception 'reviewer_only'; end if;
+  update app_progress set wf = nwf, done = ndone,
+    done_at = case when not ndone then null when (patch ? 'date') then (patch->>'date')::timestamptz else coalesce(done_at, now()) end,
+    pct = case when ndone then 100 else coalesce(nullif(patch->>'pct', '')::int, pct) end,
     due = case when patch ? 'due' then nullif(patch->>'due', '')::date else due end,
     start_date = case when patch ? 'start' then nullif(patch->>'start', '')::date else start_date end,
     owner = case when patch ? 'owner' then patch->>'owner' else owner end,
     reviewer = case when patch ? 'reviewer' then patch->>'reviewer' else reviewer end,
+    dept = case when patch ? 'dept' then patch->>'dept' else dept end,
     ref = case when patch ? 'ref' then patch->>'ref' else ref end,
     note = case when patch ? 'note' then patch->>'note' else note end,
     is_sample = false, updated_by = u.username, updated_at = now()
   where item_key = k;
-  if patch ? 'done' then perform _audit(u.username, case when fin then 'completed' else 'reopened' end, k); end if;
+  if nwf <> cur.wf then
+    insert into app_history (item_key, username, event, detail) values (k, u.username, 'status', cur.wf || ' → ' || nwf || coalesce(' – ' || nullif(patch->>'comment', ''), ''));
+    perform _audit(u.username, 'status_changed', k || ': ' || nwf);
+  elsif nullif(patch->>'comment', '') is not null then
+    insert into app_history (item_key, username, event, detail) values (k, u.username, 'comment', patch->>'comment');
+  end if;
+  select string_agg(x, ', ') into chg from jsonb_object_keys(patch) x where x in ('owner', 'reviewer', 'dept', 'due', 'start', 'ref', 'note', 'pct');
+  if chg is not null then insert into app_history (item_key, username, event, detail) values (k, u.username, 'details', 'Updated: ' || chg); end if;
 end $$;
 create or replace function app_bulk_progress(tok uuid, p_rows jsonb, p_wipe boolean default false) returns int language plpgsql security definer set search_path = public, extensions as $$
 declare u app_users; n int;
 begin
   u := _need(tok, array['admin']);
   if p_wipe then delete from app_files where is_sample; delete from app_progress where is_sample; end if;
-  insert into app_progress (item_key, done, done_at, due, owner, reviewer, wf, start_date, pct, ref, note, is_sample, updated_by)
-  select r->>'k', coalesce((r->>'done')::boolean, false), nullif(r->>'date', '')::timestamptz, nullif(r->>'due', '')::date, r->>'owner', r->>'reviewer',
-         coalesce(r->>'wf', 'Not started'), nullif(r->>'start', '')::date, coalesce((r->>'pct')::int, 0), r->>'ref', r->>'note', coalesce((r->>'sample')::boolean, true), u.username
+  insert into app_progress (item_key, done, done_at, due, owner, reviewer, dept, wf, start_date, pct, ref, note, is_sample, updated_by)
+  select r->>'k', coalesce((r->>'done')::boolean, false), nullif(r->>'date', '')::timestamptz, nullif(r->>'due', '')::date, r->>'owner', r->>'reviewer', r->>'dept',
+         coalesce(r->>'wf', 'Not Started'), nullif(r->>'start', '')::date, coalesce((r->>'pct')::int, 0), r->>'ref', r->>'note', coalesce((r->>'sample')::boolean, true), u.username
   from jsonb_array_elements(p_rows) r
-  on conflict (item_key) do update set done = excluded.done, done_at = excluded.done_at, due = excluded.due, owner = excluded.owner, reviewer = excluded.reviewer, wf = excluded.wf,
+  on conflict (item_key) do update set done = excluded.done, done_at = excluded.done_at, due = excluded.due, owner = excluded.owner, reviewer = excluded.reviewer, dept = excluded.dept, wf = excluded.wf,
     start_date = excluded.start_date, pct = excluded.pct, ref = excluded.ref, note = excluded.note, is_sample = excluded.is_sample, updated_by = excluded.updated_by, updated_at = now()
   where app_progress.is_sample;   -- real (non-sample) data is never overwritten
   get diagnostics n = row_count;
@@ -149,6 +168,7 @@ begin
   insert into app_progress (item_key) values (k) on conflict do nothing;
   insert into app_files (item_key, filename, mime, size, data, uploaded_by) values (k, fname, mime, (length(b64) * 3 / 4)::int, b64, u.username) returning id into fid;
   perform _audit(u.username, 'file_uploaded', k || ' / ' || fname);
+  insert into app_history (item_key, username, event, detail) values (k, u.username, 'evidence', fname);
   return fid;
 end $$;
 create or replace function app_list_files(tok uuid, k text) returns json language plpgsql security definer set search_path = public as $$
@@ -269,10 +289,10 @@ declare a app_users; r jsonb;
 begin
   a := _need(tok, array['admin']);
   for r in select value from jsonb_array_elements(coalesce(p_data->'progress', '[]'::jsonb)) loop
-    insert into app_progress (item_key, done, done_at, due, owner, reviewer, wf, start_date, pct, ref, note, is_sample, updated_by)
-    values (r->>'item_key', coalesce((r->>'done')::boolean, false), nullif(r->>'done_at', '')::timestamptz, nullif(r->>'due', '')::date, r->>'owner', r->>'reviewer', coalesce(r->>'wf', 'Not started'),
+    insert into app_progress (item_key, done, done_at, due, owner, reviewer, dept, wf, start_date, pct, ref, note, is_sample, updated_by)
+    values (r->>'item_key', coalesce((r->>'done')::boolean, false), nullif(r->>'done_at', '')::timestamptz, nullif(r->>'due', '')::date, r->>'owner', r->>'reviewer', r->>'dept', coalesce(r->>'wf', 'Not Started'),
             nullif(r->>'start_date', '')::date, coalesce((r->>'pct')::int, 0), r->>'ref', r->>'note', coalesce((r->>'is_sample')::boolean, false), r->>'updated_by')
-    on conflict (item_key) do update set done = excluded.done, done_at = excluded.done_at, due = excluded.due, owner = excluded.owner, reviewer = excluded.reviewer, wf = excluded.wf,
+    on conflict (item_key) do update set done = excluded.done, done_at = excluded.done_at, due = excluded.due, owner = excluded.owner, reviewer = excluded.reviewer, dept = excluded.dept, wf = excluded.wf,
       start_date = excluded.start_date, pct = excluded.pct, ref = excluded.ref, note = excluded.note, is_sample = excluded.is_sample, updated_at = now();
   end loop;
   for r in select value from jsonb_array_elements(coalesce(p_data->'nodes', '[]'::jsonb)) loop
@@ -289,4 +309,38 @@ begin
   end loop;
   perform setval(pg_get_serial_sequence('app_files', 'id'), greatest((select coalesce(max(id), 1) from app_files), 1));
   perform _audit(a.username, 'imported_backup', '');
+end $$;
+
+-- ---------- v3: history, evidence library, bulk import ----------
+create or replace function app_item_history(tok uuid, k text) returns json language plpgsql security definer set search_path = public as $$
+begin perform _me(tok);
+  return coalesce((select json_agg(x) from (select at, username, event, detail from app_history where item_key = k order by id desc limit 50) x), '[]'::json);
+end $$;
+create or replace function app_list_all_files(tok uuid) returns json language plpgsql security definer set search_path = public as $$
+begin perform _me(tok);
+  return coalesce((select json_agg(x) from (select id, item_key, filename, mime, size, uploaded_by, uploaded_at from app_files order by id desc limit 2000) x), '[]'::json);
+end $$;
+create or replace function app_import_rows(tok uuid, p_rows jsonb) returns json language plpgsql security definer set search_path = public, extensions as $$
+declare u app_users; r jsonb; cur app_progress; nwf text; ndone boolean; n int := 0; skipped text[] := '{}';
+begin
+  u := _need(tok, array['admin']);
+  for r in select value from jsonb_array_elements(p_rows) loop
+    insert into app_progress (item_key) values (r->>'k') on conflict do nothing;
+    select * into cur from app_progress where item_key = r->>'k';
+    nwf := coalesce(nullif(r->>'wf', ''), cur.wf);
+    if nwf not in ('Not Started', 'In Progress', 'Evidence Submitted', 'Under Review', 'Verified Compliant', 'Partially Compliant', 'Non-Compliant') then skipped := skipped || (r->>'k' || ' (bad status)'); continue; end if;
+    ndone := nwf not in ('Not Started', 'In Progress');
+    if ndone and not cur.done and not exists (select 1 from app_files where item_key = r->>'k') and coalesce(nullif(coalesce(r->>'ref', cur.ref), ''), '') = '' then skipped := skipped || (r->>'k' || ' (evidence reference required)'); continue; end if;
+    update app_progress set wf = nwf, done = ndone,
+      done_at = case when not ndone then null when nullif(r->>'date', '') is not null then (r->>'date')::timestamptz else coalesce(done_at, now()) end,
+      owner = coalesce(nullif(r->>'owner', ''), owner), reviewer = coalesce(nullif(r->>'reviewer', ''), reviewer), dept = coalesce(nullif(r->>'dept', ''), dept),
+      due = coalesce(nullif(r->>'due', '')::date, due), start_date = coalesce(nullif(r->>'start', '')::date, start_date),
+      pct = case when ndone then 100 else coalesce(nullif(r->>'pct', '')::int, pct) end,
+      ref = coalesce(nullif(r->>'ref', ''), ref), note = coalesce(nullif(r->>'note', ''), note), is_sample = false, updated_by = u.username, updated_at = now()
+    where item_key = r->>'k';
+    insert into app_history (item_key, username, event, detail) values (r->>'k', u.username, 'bulk_import', cur.wf || ' → ' || nwf);
+    n := n + 1;
+  end loop;
+  perform _audit(u.username, 'bulk_import_rows', n || ' updated, ' || cardinality(skipped) || ' skipped');
+  return json_build_object('updated', n, 'skipped', to_json(skipped));
 end $$;

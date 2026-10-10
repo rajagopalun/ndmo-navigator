@@ -17,7 +17,7 @@ export function MetricsTable({ items, csv, app, title, go }) {
     <div className="mt-2 flex items-center gap-3 text-xs"><button disabled={page === 0} onClick={() => setPg(page - 1)} className="rounded border px-2 py-1 disabled:opacity-40">Previous</button>Page {page + 1} of {pages}<button disabled={page >= pages - 1} onClick={() => setPg(page + 1)} className="rounded border px-2 py-1 disabled:opacity-40">Next</button></div></div>)
 }
 export function PowerBi({ all, profile }) {
-  const csv = () => download('compliance-tracker-powerbi.csv', '\ufeff' + [HEAD, ...all.map(i => [i.kind, i.domain, dn(i.domain), i.group, i.title, i.tag, i.status, i.p.date?.slice(0, 10) || '', i.p.due || '', i.p.owner, i.p.ref, i.p.note, i.p.date?.slice(0, 7) || '', i.p.due?.slice(0, 7) || '', i.key, i.p.wf || '', i.p.reviewer || '', i.p.files || 0, i.p.pct || 0])].map(r => r.map(q).join(',')).join('\n'))
+  const csv = () => download('compliance-tracker-powerbi.csv', '\ufeff' + [HEAD, ...all.map(i => [i.kind, i.domain, dn(i.domain), i.group, i.title, i.tag, i.status, i.p.date?.slice(0, 10) || '', i.p.due || '', i.p.owner, i.p.ref, i.p.note, i.p.date?.slice(0, 7) || '', i.p.due?.slice(0, 7) || '', i.key, i.p.wf || '', i.p.reviewer || '', i.p.files || 0, i.p.pct || 0, i.p.dept || ''])].map(r => r.map(q).join(',')).join('\n'))
   const c = profile.color || '#006C35'
   const theme = () => download('compliance-tracker-theme.json', JSON.stringify({ name: 'Compliance Tracker', dataColors: [c, '#94a3b8', '#dc2626', '#f59e0b', '#0ea5e9', '#7c3aed', '#14b8a6', '#64748b'], background: '#FFFFFF', foreground: '#1e293b', tableAccent: c }, null, 2), 'application/json')
   return (<div className="space-y-4">

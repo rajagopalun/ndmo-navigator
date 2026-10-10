@@ -4,7 +4,7 @@ import { setExtra } from './items.js'
 const Ctx = createContext(null)
 export const useApp = () => useContext(Ctx)
 const mix = (h, t, a) => { const n = parseInt(h.slice(1), 16); return '#' + [n >> 16, (n >> 8) & 255, n & 255].map(v => Math.round(v + (t - v) * a).toString(16).padStart(2, '0')).join('') }
-const toRow = r => ({ done: r.done, date: r.done_at, due: r.due || '', owner: r.owner || '', reviewer: r.reviewer || '', wf: r.wf, start: r.start_date || '', pct: r.pct, ref: r.ref || '', note: r.note || '', files: Number(r.files || 0), sample: r.is_sample, by: r.updated_by })
+const toRow = r => ({ done: r.done, date: r.done_at, due: r.due || '', owner: r.owner || '', reviewer: r.reviewer || '', dept: r.dept || '', wf: r.wf, start: r.start_date || '', pct: r.pct, ref: r.ref || '', note: r.note || '', files: Number(r.files || 0), sample: r.is_sample, by: r.updated_by })
 export function AppProvider({ children }) {
   const [tok, setTok] = useState(() => sessionStorage.getItem('tok')), [me, setMe] = useState(null), [settings, setSettings] = useState({ color: '#006C35' })
   const [progress, setProgress] = useState({}), [nodes, setNodes] = useState([]), [err, setErr] = useState('')
