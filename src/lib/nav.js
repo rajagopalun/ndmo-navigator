@@ -1,4 +1,5 @@
 import { domains, controls, specifications, maturityQuestions, oeMetrics } from '../ndmoData.js'
+import { articles } from '../pdplData.js'
 export const dn = id => domains.find(d => d.id === id)?.name || id
 export const firstLevel = mq => Object.keys(maturityQuestions[mq]?.levels || {})[0]
 export const specsOfControl = c => specifications.filter(s => s.control === c)
@@ -10,9 +11,12 @@ export const resolve = code => {
   if (specifications.some(s => s.id === code)) return { mode: 'ndmo', id: code }
   const s = specsOfControl(code)[0]; return s ? { mode: 'ndmo', id: s.id } : null
 }
-export const first = mode => mode === 'ndmo' ? specifications[0].id : mode === 'oe' ? oeMetrics[0].code : (c => `${c}|${firstLevel(c)}`)(Object.keys(maturityQuestions)[0])
+export const first = mode => mode === 'pdpl' ? 'A1' : mode === 'ndmo' ? specifications[0].id : mode === 'oe' ? oeMetrics[0].code : (c => `${c}|${firstLevel(c)}`)(Object.keys(maturityQuestions)[0])
 const customTree = (nodes, mode, parent = null) => nodes.filter(n => n.mode === mode && (n.parent_id || null) === parent).map(n => { const ch = customTree(nodes, mode, n.id); return { id: 'X:' + n.id, label: n.title, custom: true, ...(ch.length ? { children: ch } : { leaf: true }) } })
+const GR = [[1, 10], [11, 20], [21, 30], [31, 43]]
+const pdplTree = () => GR.map(([a, b], i) => ({ id: 'G' + (i + 1), label: `Articles ${a}–${b}`, children: articles.filter(x => x.n >= a && x.n <= b && x.n !== 32).map(x => ({ id: 'A' + x.n, label: `Article ${x.n}`, leaf: true })) }))
 export const buildTree = (mode, nodes = []) => {
+  if (mode === 'pdpl') return [...pdplTree(), ...customTree(nodes, mode)]
   let t
   if (mode === 'ndmo') t = domains.map(d => ({ id: d.id, label: `${d.id} · ${d.name}`, children: controls.filter(c => c.domain === d.id).map(c => ({ id: c.id, label: `${c.id} ${c.name}`, children: specsOfControl(c.id).map(s => ({ id: s.id, label: `${s.id} ${s.name}`, leaf: true })) })) })).filter(d => d.children.length)
   else if (mode === 'ndi') { const g = {}; Object.values(maturityQuestions).forEach(q => (g[q.code.split('.')[0]] ||= []).push(q))
@@ -22,9 +26,10 @@ export const buildTree = (mode, nodes = []) => {
 }
 export const ancestors = (mode, id, nodes = []) => {
   if (id.startsWith('X:')) { const a = [id]; let c = nodes.find(n => 'X:' + n.id === id); while (c?.parent_id) { a.push('X:' + c.parent_id); c = nodes.find(n => n.id === c.parent_id) } return a }
+  if (mode === 'pdpl') { const k = +id.replace(/\D/g, ''); return [id.startsWith('G') ? id : 'G' + (k <= 10 ? 1 : k <= 20 ? 2 : k <= 30 ? 3 : 4)] }
   return mode === 'ndmo' ? [id.split('.')[0], id.split('.').slice(0, 2).join('.')] : mode === 'ndi' ? [id.split('.')[0], id.split('|')[0]] : [id.split('.')[0]]
 }
-export const leafKeys = (mode, id) => id.startsWith('X:') ? [id] : mode === 'ndmo' ? ['S:' + id] : mode === 'oe' ? ['M:' + id] : (([mq, l]) => levelKeys(mq, l))(id.split('|'))
+export const leafKeys = (mode, id) => id.startsWith('X:') ? [id] : mode === 'pdpl' ? ['P:' + id.slice(1)] : mode === 'ndmo' ? ['S:' + id] : mode === 'oe' ? ['M:' + id] : (([mq, l]) => levelKeys(mq, l))(id.split('|'))
 export const keysOf = (mode, n) => n.leaf ? leafKeys(mode, n.id) : [...(n.custom ? [n.id] : []), ...n.children.flatMap(c => keysOf(mode, c))]
 export const siblingIds = (nodes, id) => { for (const n of nodes) { if (n.id === id) return nodes.map(x => x.id); if (n.children) { const r = siblingIds(n.children, id); if (r) return r } } return null }
 export const branchIds = nodes => nodes.flatMap(n => n.children ? [n.id, ...branchIds(n.children)] : [])

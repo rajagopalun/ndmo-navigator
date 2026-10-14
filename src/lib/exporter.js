@@ -1,4 +1,5 @@
 import { universe } from './items.js'
+import { getLang, trHtml } from './i18n.js'
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]))
 const d = v => v ? new Date(v).toLocaleDateString('en-GB') : ''
 export const exportKind = (app, kind, domain, title) => exportReport({ title, items: universe().filter(i => i.kind === kind && (!domain || i.domain === domain)), ...app })
@@ -19,7 +20,7 @@ ${Object.entries(groups).map(([g, rs]) => `<h2>${esc(g)}</h2><table><tr><th>Item
 <footer><div class="sig">${profile.signature ? `<img src="${profile.signature}"><br>` : '<br><br>'}Authorised signature</div><div>${profile.seal ? `<img src="${profile.seal}">` : ''}</div></footer>
 <script>window.onload=()=>setTimeout(()=>window.print(),400)</script></body></html>`
   const w = window.open('', '_blank'); if (!w) return alert('Please allow pop-ups, then click Export again.')
-  w.document.write(html); w.document.close()
+  w.document.write(getLang() === 'ar' ? trHtml(html).replace('<html>', '<html lang="ar" dir="rtl">') : html); w.document.close()
 }
 
 export const download = (name, text, type = 'text/csv') => { const a = document.createElement('a'); a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click() }

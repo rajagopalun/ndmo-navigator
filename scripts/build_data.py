@@ -45,6 +45,14 @@ for k,q in ndi['questions'].items():
         pair=len(gs)==len(ev)
         lv[L]={'name':LV[int(L)],'items':[{'evidence':x,'criteria':(gs[i] if pair else None)} for i,x in enumerate(ev)],'loose':([] if pair else gs)}
     mq[k]={'code':k,'question':q,'levels':lv}
+lvl=json.load(open('/tmp/ndi_levels.json'))
+for q,ls in lvl.items():
+    for L,v in ls.items():
+        if q not in mq: continue
+        cur=mq[q]['levels'].get(L)
+        if cur is None: mq[q]['levels'][L]={'name':LV[int(L)],'items':[{'evidence':x,'criteria':None} for x in v['items']],'loose':[],'desc':v['desc']}
+        else: cur['desc']=v['desc']
+    mq[q]['levels']=dict(sorted(mq[q]['levels'].items(),key=lambda kv:int(kv[0])))
 # ---- recommended-practice methodology templates (NOT official NDMO content)
 T={
 'Strategy':['Assess current data-management challenges and business drivers','Draft the document covering every required element in the specification text','Review with the Data Management Office and legal/risk stakeholders','Obtain formal approval from the Data Management Committee / authority holder','Publish internally and record the approval decision and version'],

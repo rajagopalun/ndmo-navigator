@@ -6,14 +6,14 @@ import { keysOf, dn } from '../lib/nav.js'
 import { bulkCsv, rowsFromCsv } from '../lib/bulk.js'
 import { download } from '../lib/exporter.js'
 import { INTRO } from '../lib/docs.js'
-import { Card, Kpi, Bar, Badge, pctOf, today } from '../lib/ui.jsx'
+import { Card, Kpi, Bar, Badge, RAG, pctOf, today } from '../lib/ui.jsx'
 import { DocCard } from './Library.jsx'
 import ScopeButtons from './ScopeButtons.jsx'
 const P = 'rounded-lg bg-ksa px-3 py-1.5 text-xs font-medium text-white', B = 'rounded-lg border border-ksa px-3 py-1.5 text-xs font-medium text-ksa hover:bg-ksa-light'
 const stats = (mode, node, progress) => { const ks = keysOf(mode, node), t = today(); return { t: ks.length, sub: ks.filter(k => progress[k]?.done).length, ok: ks.filter(k => progress[k]?.wf === 'Verified Compliant').length, over: ks.filter(k => !progress[k]?.done && progress[k]?.due && progress[k].due < t).length, ks: new Set(ks) } }
-const Stats = ({ s }) => <div className="grid grid-cols-2 gap-3 md:grid-cols-4"><Kpi l="Requirements" v={s.t} /><Kpi l="Evidence submitted" v={`${s.sub}`} sub={`${pctOf(s.sub, s.t)}%`} /><Kpi l="Verified compliant" v={s.ok} c="text-emerald-600" sub={`${pctOf(s.ok, s.t)}%`} /><Kpi l="Overdue" v={s.over} c={s.over ? 'text-red-600' : ''} /></div>
+const Stats = ({ s }) => <div className="grid grid-cols-2 gap-3 md:grid-cols-4"><Kpi l="Requirements" v={s.t} /><Kpi l="Evidence submitted" v={`${s.sub}`} sub={`${pctOf(s.sub, s.t)}%`} /><Kpi l="Verified compliant" v={s.ok} h={RAG.g} sub={`${pctOf(s.ok, s.t)}%`} /><Kpi l="Overdue" v={s.over} h={s.over ? RAG.r : undefined} /></div>
 export function SectionHome({ mode, tree, go }) {
-  const { progress, isAdmin, call, refresh, docs } = useApp(), kind = { ndmo: 'NDMO', ndi: 'NDI', oe: 'OE' }[mode], label = { ndmo: 'NDMO', ndi: 'NDI', oe: 'NDI OE' }[mode], intro = INTRO[mode]
+  const { progress, isAdmin, call, refresh, docs } = useApp(), kind = { ndmo: 'NDMO', ndi: 'NDI', oe: 'OE', pdpl: 'PDPL' }[mode], label = { ndmo: 'NDMO', ndi: 'NDI', oe: 'NDI OE', pdpl: 'PDPL' }[mode], intro = INTRO[mode]
   const s = stats(mode, { leaf: false, children: tree }, progress), [res, setRes] = useState(null)
   const imp = async e => { const f = e.target.files[0]; e.target.value = ''; if (!f) return; const { rows, errors } = rowsFromCsv(await f.text()); if (!rows.length) return setRes({ updated: 0, skipped: errors }); if (!confirm(`Apply ${rows.length} row(s) from ${f.name}? Blank cells are left unchanged.`)) return
     try { const r = await call('app_import_rows', { p_rows: rows }); setRes({ updated: r.updated, skipped: [...errors, ...r.skipped] }); refresh() } catch (x) { alert(x.message) } }
@@ -35,6 +35,7 @@ export function BranchOverview({ mode, node, go }) {
     else if (mode === 'ndmo') info = controls.find(x => x.id === id)?.description || ''
     else if (mode === 'ndi' && !id.includes('MQ')) info = `${dn(id)} – ${node.children.length} maturity question(s), each assessed at several maturity levels with acceptance evidence.`
     else if (mode === 'ndi') info = maturityQuestions[id]?.question
+    else if (mode === 'pdpl') info = `${node.children.length} articles of the Personal Data Protection Law.`
     else info = `${dn(id)} – ${node.children.length} operational excellence metric(s) measured from the national data platforms.` }
   return (<div className="space-y-4"><Card><p className="font-mono text-xs text-slate-500">{node.custom ? 'Custom section' : id}</p><h2 className="text-xl font-semibold">{node.label}</h2>{info && <p className="mt-2 text-sm leading-6 text-slate-600">{info}</p>}
     <div className="mt-3 flex flex-wrap gap-2"><ScopeButtons scope={{ title: node.label, filter: i => s.ks.has(i.key), explain: info }} prefix="section" /></div></Card>

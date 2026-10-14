@@ -4,13 +4,15 @@ import { useApp } from '../lib/store.jsx'
 import { universe } from '../lib/items.js'
 import { exportReport, download } from '../lib/exporter.js'
 import { buildMail, mailtoUrl, buildEml } from '../lib/mail.js'
+import { getLang, tr, trLines, trHtml } from '../lib/i18n.js'
 const B = 'flex items-center gap-1 rounded-md border border-ksa px-2.5 py-1.5 text-xs font-medium text-ksa hover:bg-ksa-light', P = 'flex items-center gap-1 rounded-md bg-ksa px-2.5 py-1.5 text-xs font-medium text-white hover:opacity-90'
 function MailModal({ mode, scope, items, onClose }) {
   const { progress, user, profile, call } = useApp(), t = new Date(), ref = useRef(null)
   const dflt = items.map(i => progress[i.key]).filter(p => p && !p.done && p.due).map(p => p.due).sort()[0] || new Date(t.getTime() + 14 * 864e5).toISOString().slice(0, 10)
   const [to, setTo] = useState(''), [extra, setExtra] = useState(''), [deadline, setDeadline] = useState(dflt), [atts, setAtts] = useState(null)
   useEffect(() => { if (mode !== 'evidence') return; const keys = items.filter(i => progress[i.key]?.files).map(i => i.key); keys.length ? call('app_get_files_bulk', { p_keys: keys }).then(setAtts).catch(() => setAtts([])) : setAtts([]) }, [])
-  const m = useMemo(() => buildMail(mode, { scope, items, progress, deadline, extra, user, url: location.href.split('#')[0], color: profile.color, attCount: atts?.length || 0 }), [mode, scope, items, progress, deadline, extra, user, atts])
+  const m0 = useMemo(() => buildMail(mode, { scope, items, progress, deadline, extra, user, url: location.href.split('#')[0], color: profile.color, attCount: atts?.length || 0 }), [mode, scope, items, progress, deadline, extra, user, atts])
+  const m = useMemo(() => getLang() === 'ar' ? { subject: tr(m0.subject), text: trLines(m0.text), html: `<div dir="rtl" style="text-align:right">${trHtml(m0.html)}</div>` } : m0, [m0])
   const html = () => ref.current?.innerHTML || m.html, mb = ((atts || []).reduce((s, f) => s + f.data.length, 0) * .75 / 1048576).toFixed(1)
   const eml = () => { const files = []; let tot = 0; for (const f of atts || []) { tot += f.data.length; if (tot > 20e6) { alert('Attachments exceed ~15 MB – the rest were skipped.'); break } files.push(f) } download(`${scope.title.replace(/[^\w]+/g, '_').slice(0, 40)}.eml`, buildEml({ to, subject: m.subject, html: html(), files }), 'message/rfc822'); alert('Open the downloaded .eml file – it opens in Outlook as a ready-to-send draft with formatting' + (files.length ? ' and attachments.' : '.')) }
   const copyRich = async () => { try { await navigator.clipboard.write([new ClipboardItem({ 'text/html': new Blob([html()], { type: 'text/html' }), 'text/plain': new Blob([m.text], { type: 'text/plain' }) })]); return true } catch { alert('Copy failed – select the preview and copy it manually.'); return false } }

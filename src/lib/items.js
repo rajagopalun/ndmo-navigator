@@ -1,4 +1,5 @@
 import { controls, specifications, maturityQuestions, oeMetrics } from '../ndmoData.js'
+import { articles } from '../pdplData.js'
 let cache
 const build = () => {
   const out = [], ctl = Object.fromEntries(controls.map(c => [c.id, c]))
@@ -8,12 +9,14 @@ const build = () => {
     lv.items.forEach((it, i) => out.push({ ...base, key: `E:${q.code}|${l}|${i}`, title: it.evidence, detail: it.criteria ? [it.criteria.text, ...it.criteria.points].join(' ') : '' }))
     lv.loose.forEach((c, j) => out.push({ ...base, key: `C:${q.code}|${l}|${j}`, title: 'Acceptance criteria: ' + c.text, detail: c.points.join(' ') }))
   }))
+  articles.filter(a => a.n !== 32).forEach(a => out.push({ key: 'P:' + a.n, kind: 'PDPL', domain: 'PDPL', group: 'Personal Data Protection Law', title: `Article ${a.n} – ${a.paras[0].slice(0, 110)}`, detail: '', tag: 'Law', nav: { mode: 'pdpl', id: 'A' + a.n } }))
   oeMetrics.forEach(m => out.push({ key: 'M:' + m.code, kind: 'OE', domain: m.domain, group: m.platform, title: `${m.code} ${m.name}`, detail: `Threshold ${m.threshold}`, tag: m.platform, nav: { mode: 'oe', id: m.code } }))
   return out
 }
 let extra = []
 export const setExtra = n => { extra = n || [] }
-const KINDS = { ndmo: 'NDMO', ndi: 'NDI', oe: 'OE' }
+const KINDS = { ndmo: 'NDMO', ndi: 'NDI', oe: 'OE', pdpl: 'PDPL' }
+export const resetUniverse = () => { cache = null }
 const custom = () => { const by = Object.fromEntries(extra.map(n => [n.id, n])), root = n => n.parent_id && by[n.parent_id] ? root(by[n.parent_id]) : n, path = n => (n.parent_id && by[n.parent_id] ? path(by[n.parent_id]) + ' › ' : '') + n.title
   return extra.map(n => ({ key: 'X:' + n.id, kind: KINDS[n.mode], domain: root(n).title, group: path(n), title: n.title, detail: (n.body || '').slice(0, 200), tag: 'Custom', nav: { mode: n.mode, id: 'X:' + n.id } })) }
 export const universe = () => [...(cache ||= build()), ...custom()]

@@ -18,4 +18,8 @@ export const INTRO = {
     'Operational Excellence measures how efficiently and effectively government entities run their data management operations, using information captured from the national data platforms managed by SDAIA (for example GSB, NDL, NDC, RDP, ODP and Tawakkalna).',
     'OE consists of 24 metrics across six domains. The 2026 round (1 January – 31 December 2026) targets 13 of them, each with a weight; scores are mapped to a 0–5 scale from Unacceptable to Leader.'],
     note: 'SDAIA collects OE results from the platforms; entities do not submit evidence for OE metrics. Use this tracker for your internal action status.' },
+  pdpl: { title: 'Personal Data Protection Law (PDPL)', paras: [
+    'The Personal Data Protection Law was issued pursuant to Royal Decree No. (M/19) dated 09/02/1443 AH (16/09/2021) and amended pursuant to Royal Decree No. (M/148) dated 05/09/1444 AH (27/03/2023).',
+    'It applies to any processing of personal data related to individuals that takes place in the Kingdom by any means, including processing from outside the Kingdom of data relating to individuals residing in the Kingdom (Article 2).'],
+    note: 'The law has 43 articles. Article 32 is repealed and is not tracked. Each article can be assigned an owner, a status and evidence. The official Arabic text is shown from the Arabic PDF.' },
 }

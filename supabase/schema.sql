@@ -365,15 +365,6 @@ begin
   delete from app_users where id = p_uid;
   perform _audit(a.username, 'user_deleted', t.username);
 end $$;
-create or replace function app_save_setting(tok uuid, p_key text, p_value jsonb) returns void language plpgsql security definer set search_path = public as $$
-declare a app_users;
-begin
-  a := _need(tok, array['admin']);
-  if p_key not in ('color', 'logo', 'seal', 'signature', 'title', 'subtitle') then raise exception 'bad_request'; end if;
-  insert into app_settings (key, value) values (p_key, p_value) on conflict (key) do update set value = excluded.value;
-  perform _audit(a.username, 'setting_saved', p_key);
-end $$;
-
 -- sample users (contributors, password Demo@123) so sample records belong to real accounts
 create or replace function app_create_sample_users(tok uuid) returns json language plpgsql security definer set search_path = public, extensions as $$
 declare u app_users;
@@ -431,17 +422,47 @@ create or replace function app_get_doc(tok uuid, p_id uuid) returns json languag
 begin perform _me(tok);
   return (select json_build_object('filename', filename, 'mime', mime, 'data', data) from app_docs where id = p_id);
 end $$;
-create or replace function app_save_doc(tok uuid, p_id uuid, p_tag text, p_title text, p_version text, p_publisher text, p_descr text, p_filename text, p_mime text, p_data text, p_sort int default 0) returns uuid language plpgsql security definer set search_path = public as $$
+create or replace function app_delete_doc(tok uuid, p_id uuid) returns void language plpgsql security definer set search_path = public as $$
+declare a app_users;
+begin a := _need(tok, array['admin']); delete from app_docs where id = p_id; perform _audit(a.username, 'library_doc_deleted', p_id::text); end $$;
+
+-- =====================================================================
+-- v5: PDPL, Arabic documents, status colours, editable library language
+-- =====================================================================
+alter table app_docs add column if not exists lang text default 'en';
+alter table app_nodes drop constraint if exists app_nodes_mode_check;
+alter table app_nodes add constraint app_nodes_mode_check check (mode in ('ndmo', 'ndi', 'oe', 'pdpl'));
+insert into app_docs (tag, title, version, publisher, descr, filename, url, lang, sort)
+select v.* from (values
+ ('PDPL', 'Personal Data Protection Law', 'Royal Decree M/19, amended by M/148', 'Saudi Data & AI Authority (SDAIA)', 'Personal Data Protection Law, English edition.', 'Personal_Data_English_V2-23April2023-_Reviewed-.pdf', '/docs/Personal_Data_English_V2-23April2023-_Reviewed-.pdf', 'en', 5),
+ ('PDPL', 'نظام حماية البيانات الشخصية', 'المرسوم الملكي م/19 المعدل بالمرسوم م/148', 'الهيئة السعودية للبيانات والذكاء الاصطناعي (سدايا)', 'النسخة العربية من نظام حماية البيانات الشخصية.', 'Personal_Data_Arabic.pdf', '/docs/Personal_Data_Arabic.pdf', 'ar', 6),
+ ('NDMO', 'National Data Management and Personal Data Protection Standards – Arabic edition', 'Version 1.5', 'National Data Management Office (NDMO)', 'Arabic edition of the NDMO standards.', 'ndmo_arabic.pdf', '/docs/ndmo_arabic.pdf', 'ar', 7),
+ ('NDI', 'National Data Index (NDI) – Arabic edition', 'Version 1.1', 'Saudi Data & AI Authority (SDAIA)', 'Arabic edition of the National Data Index.', 'National-Data-Index_v1_0_AR.pdf', '/docs/National-Data-Index_v1_0_AR.pdf', 'ar', 8),
+ ('NDI OE', 'NDI Operational Excellence – Support Handbook – Arabic edition', 'Version 6.0', 'Saudi Data & AI Authority (SDAIA)', 'Arabic edition of the OE Support Handbook.', 'FAQsforOperationalExcellence_Arabic.pdf', '/docs/FAQsforOperationalExcellence_Arabic.pdf', 'ar', 9)
+) v(tag, title, version, publisher, descr, filename, url, lang, sort)
+where not exists (select 1 from app_docs d where d.filename = v.filename);
+update app_docs set lang = 'en' where lang is null;
+
+create or replace function app_save_setting(tok uuid, p_key text, p_value jsonb) returns void language plpgsql security definer set search_path = public as $$
+declare a app_users;
+begin
+  a := _need(tok, array['admin']);
+  if p_key not in ('color', 'logo', 'seal', 'signature', 'title', 'subtitle', 'rag_g', 'rag_a', 'rag_r', 'rag_n') then raise exception 'bad_request'; end if;
+  insert into app_settings (key, value) values (p_key, p_value) on conflict (key) do update set value = excluded.value;
+  perform _audit(a.username, 'setting_saved', p_key);
+end $$;
+drop function if exists app_save_doc(uuid, uuid, text, text, text, text, text, text, text, text, int);
+create or replace function app_save_doc(tok uuid, p_id uuid, p_tag text, p_title text, p_version text, p_publisher text, p_descr text, p_filename text, p_mime text, p_data text, p_lang text default 'en', p_sort int default 0) returns uuid language plpgsql security definer set search_path = public as $$
 declare a app_users; nid uuid;
 begin
   a := _need(tok, array['admin']);
-  if p_tag not in ('NDMO', 'NDI', 'NDI OE') then raise exception 'bad_request'; end if;
+  if p_tag not in ('NDMO', 'NDI', 'NDI OE', 'PDPL') or p_lang not in ('en', 'ar') then raise exception 'bad_request'; end if;
   if p_data is not null and length(p_data) > 8500000 then raise exception 'file_too_large'; end if;
   if p_id is null then
-    insert into app_docs (tag, title, version, publisher, descr, filename, mime, size, data, sort, updated_by)
-    values (p_tag, p_title, p_version, p_publisher, p_descr, p_filename, p_mime, case when p_data is null then null else (length(p_data) * 3 / 4)::int end, p_data, coalesce(p_sort, 0), a.username) returning id into nid;
+    insert into app_docs (tag, title, version, publisher, descr, filename, mime, size, data, lang, sort, updated_by)
+    values (p_tag, p_title, p_version, p_publisher, p_descr, p_filename, p_mime, case when p_data is null then null else (length(p_data) * 3 / 4)::int end, p_data, p_lang, coalesce(p_sort, 0), a.username) returning id into nid;
   else
-    update app_docs set tag = p_tag, title = p_title, version = p_version, publisher = p_publisher, descr = p_descr,
+    update app_docs set tag = p_tag, title = p_title, version = p_version, publisher = p_publisher, descr = p_descr, lang = p_lang,
       filename = case when p_data is not null then p_filename else filename end, mime = case when p_data is not null then p_mime else mime end,
       size = case when p_data is not null then (length(p_data) * 3 / 4)::int else size end, url = case when p_data is not null then null else url end,
       data = coalesce(p_data, data), updated_by = a.username, updated_at = now() where id = p_id returning id into nid;
@@ -449,6 +470,15 @@ begin
   perform _audit(a.username, 'library_doc_saved', p_title);
   return nid;
 end $$;
-create or replace function app_delete_doc(tok uuid, p_id uuid) returns void language plpgsql security definer set search_path = public as $$
-declare a app_users;
-begin a := _need(tok, array['admin']); delete from app_docs where id = p_id; perform _audit(a.username, 'library_doc_deleted', p_id::text); end $$;
+create or replace function app_get_state(tok uuid) returns json language plpgsql security definer set search_path = public, extensions as $$
+declare u app_users;
+begin
+  u := _me(tok);
+  return json_build_object(
+    'me', json_build_object('username', u.username, 'display_name', u.display_name, 'role', u.role, 'must_change', u.must_change, 'auth_type', u.auth_type),
+    'settings', coalesce((select json_object_agg(key, value) from app_settings), '{}'::json),
+    'progress', coalesce((select json_agg(x) from (select p.item_key, p.done, p.done_at, p.due, p.owner, p.reviewer, p.dept, p.wf, p.start_date, p.pct, p.ref, p.note, p.is_sample, p.updated_by,
+        (select count(*) from app_files f where f.item_key = p.item_key) as files from app_progress p) x), '[]'::json),
+    'docs', coalesce((select json_agg(x) from (select id, tag, title, version, publisher, descr, filename, size, url, lang, (data is not null) as has_data, updated_at from app_docs order by sort, title) x), '[]'::json),
+    'nodes', coalesce((select json_agg(n order by n.sort, n.title) from app_nodes n), '[]'::json));
+end $$;

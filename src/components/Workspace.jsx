@@ -1,6 +1,8 @@
 import { useState, useEffect, useMemo } from 'react'
 import { PanelLeftClose, PanelLeftOpen, ChevronRight, ChevronDown, CheckCircle2, Circle, Plus } from 'lucide-react'
 import { Badge } from '../lib/ui.jsx'
+import { articles } from '../pdplData.js'
+import { getLang, LD } from '../lib/i18n.js'
 import { SectionHome, BranchOverview } from './Overview.jsx'
 import { specifications, controls, maturityQuestions, oeMetrics } from '../ndmoData.js'
 import { useApp } from '../lib/store.jsx'
@@ -12,6 +14,7 @@ import ScopeButtons from './ScopeButtons.jsx'
 import Track from './Track.jsx'; import Linked from './Linked.jsx'
 const Card = ({ title, children }) => <section className="rounded-lg border bg-white p-4"><h3 className="mb-2 text-sm font-semibold text-ksa">{title}</h3>{children}</section>
 const Chip = ({ onClick, children }) => <button onClick={onClick} className="mb-1.5 mr-1.5 rounded border border-ksa px-2 py-0.5 text-left text-xs text-ksa hover:bg-ksa-light">{children}</button>
+const PdfPanel = ({ src, page }) => <div><iframe title="Official text" src={`${src}#page=${page}&zoom=page-width`} className="h-[34rem] w-full rounded-lg border" /><a href={`${src}#page=${page}`} target="_blank" rel="noopener noreferrer" className="mt-1 inline-block text-xs text-ksa underline">Open the Arabic PDF in a new tab</a></div>
 const Sub = ({ children }) => <p className="mb-1 mt-3 text-xs font-semibold uppercase text-slate-500">{children}</p>
 const Head = ({ code, title, sub, scope }) => (<div className="flex flex-wrap items-start gap-2"><div className="min-w-0 flex-1"><p className="font-mono text-xs text-slate-500">{code}</p><h2 className="text-xl font-semibold">{title}</h2>{sub && <p className="mt-1 text-sm text-slate-500">{sub}</p>}</div>
   <div className="flex flex-wrap gap-2"><ScopeButtons scope={scope} /></div></div>)
@@ -54,6 +57,7 @@ function NdmoView({ id, go }) {
     <div className="grid gap-4 xl:grid-cols-3"><div className="space-y-4 xl:col-span-2">
       <Card title="Official regulatory text"><blockquote className="border-l-4 border-ksa bg-slate-50 px-4 py-3 font-serif text-[15px] leading-7 text-slate-800"><p><Linked text={lead} go={go} /></p>{items.length > 0 && <ol className="mt-2 list-decimal space-y-1.5 pl-6">{items.map((x, i) => <li key={i}><Linked text={x.replace(/^\d+\.\s*/, '')} go={go} /></li>)}</ol>}</blockquote>
         <p className="mt-2 text-[11px] text-slate-400">Source: NDMO Data Management and Personal Data Protection Standards v1.5 – specification {s.id}, priority {s.priority}. Wording is reproduced from the document.</p></Card>
+      {getLang() === 'ar' && !LD.ar?.specs?.[s.id] && LD.ar?.specPages?.[s.id] && <Card title="Official Arabic text"><PdfPanel src="/docs/ndmo_arabic.pdf" page={LD.ar.specPages[s.id]} /></Card>}
       <Card title="Reading aid – key points"><ul className="list-disc space-y-1.5 pl-5 text-sm leading-6">{points.map((p, i) => <li key={i}>{mod(p)}</li>)}</ul><p className="mt-2 text-[11px] text-slate-400">Each point is taken from the official text above (obligation words highlighted). No requirements are added.</p></Card>
       <Card title="Implementation steps"><p className="text-sm">Goal: produce <b>{g.deliverable}</b> that satisfies this specification.</p><ol className="mt-2 list-decimal space-y-1.5 pl-5 text-sm leading-6">{g.steps.map((x, i) => <li key={i}>{x}</li>)}</ol>
         {g.roles.length > 0 && <p className="mt-3 text-sm"><b>Roles named in the text:</b> {g.roles.join(', ')}.</p>}{g.frequency && <p className="mt-1 text-sm"><b>Frequency stated:</b> {g.frequency}.</p>}
@@ -72,6 +76,7 @@ function NdiView({ id, go }) {
   return (<div className="space-y-4">
     <Head code={`${mq} · Level ${l} – ${lv.name}`} title={q.question} sub={`${dn(dom)} · ${done} of ${keys.length} items submitted`} scope={{ title: `${mq} Level ${l} – ${lv.name}`, filter: i => i.kind === 'NDI' && i.nav.id === id, explain: q.question }} />
     <div>{Object.entries(q.levels).map(([k, v]) => <button key={k} onClick={() => go({ mode: 'ndi', id: `${mq}|${k}` })} className={`mr-1.5 rounded-full border px-3 py-1 text-xs ${k === l ? 'bg-ksa text-white' : 'border-ksa text-ksa hover:bg-ksa-light'}`}>Level {k} · {v.name}</button>)}</div>
+    {lv.desc && <Card title="Level description"><p className="text-sm leading-6">{lv.desc}</p></Card>}{getLang() === 'ar' && LD.ar?.ndiPages?.[mq] && <Card title="Official Arabic text"><PdfPanel src="/docs/National-Data-Index_v1_0_AR.pdf" page={LD.ar.ndiPages[mq].c} /></Card>}
     <Card title="Evidence checklist – tick each item when submitted">
       <div className="space-y-2">{lv.items.map((it, i) => <Track key={i} k={`E:${mq}|${l}|${i}`} extra={<Crit c={it.criteria} />}><b>Evidence:</b> <Linked text={it.evidence} go={go} /></Track>)}
         {lv.loose.map((c, j) => <Track key={'c' + j} k={`C:${mq}|${l}|${j}`} extra={c.points.length ? <ul className="list-disc space-y-0.5 pl-5 text-xs text-slate-700">{c.points.map((p, i) => <li key={i}><Linked text={p} go={go} /></li>)}</ul> : null}><b>Acceptance criterion:</b> <Linked text={c.text} go={go} /></Track>)}
@@ -95,13 +100,23 @@ function OeView({ id, go }) {
       <Sub>NDI maturity questions in this domain</Sub>{Object.values(maturityQuestions).filter(q => q.code.startsWith(m.domain + '.')).map(q => <Chip key={q.code} onClick={() => go({ mode: 'ndi', id: `${q.code}|${Object.keys(q.levels)[0]}` })}>{q.code}</Chip>)}</Card>
   </div>)
 }
+function PdplView({ id, go }) {
+  const a = articles.find(x => 'A' + x.n === id); if (!a) return null
+  const ar = getLang() === 'ar'
+  const ArP = a.ar ? <Card title="Official Arabic text"><PdfPanel src="/docs/Personal_Data_Arabic.pdf" page={a.ar} /></Card> : null
+  const En = <Card title="Official English text"><blockquote className="border-s-4 border-ksa bg-slate-50 px-4 py-3 font-serif text-[15px] leading-7 text-slate-800">{a.paras.map((p, i) => <p key={i} className="mb-2 last:mb-0">{p}</p>)}</blockquote><p className="mt-2 text-[11px] text-slate-400">Source: Personal Data Protection Law (Royal Decree M/19, amended by M/148).</p></Card>
+  return (<div className="space-y-4"><div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm"><div className="flex flex-wrap items-start gap-3"><div className="min-w-0 flex-1"><p className="text-xs text-slate-500">Personal Data Protection Law</p><h2 className="mt-1 text-2xl font-semibold">Article {a.n}</h2></div>
+    <div className="flex flex-wrap gap-2"><ScopeButtons scope={{ title: `PDPL – Article ${a.n}`, filter: i => i.key === 'P:' + a.n, explain: a.paras.join(' ').slice(0, 900) }} /></div></div></div>
+    <div className="grid gap-4 xl:grid-cols-3"><div className="space-y-4 xl:col-span-2">{ar ? <>{ArP}{En}</> : <>{En}{ArP}</>}</div>
+      <div className="space-y-4"><Card title="Status, ownership & review history"><Track k={'P:' + a.n} defaultOpen>Evidence submitted for this article</Track></Card></div></div></div>)
+}
 export default function Workspace({ mode, selId, go }) {
   const app = useApp(), { progress, nodes, isAdmin, call, refresh } = app, tree = useMemo(() => buildTree(mode, nodes), [mode, nodes]), [open, setOpen] = useState(new Set()), [side, setSide] = useState(true)
   useEffect(() => setOpen(new Set(selId ? ancestors(mode, selId, nodes) : [])), [mode, selId])
   const toggle = id => setOpen(o => { const n = new Set(o); if (n.has(id)) n.delete(id); else { (siblingIds(tree, id) || []).forEach(s => n.delete(s)); n.add(id) } return n })
   const stat = n => { const ks = keysOf(mode, n); return { t: ks.length, d: ks.filter(k => progress[k]?.done).length } }
   const doneOf = id => { const ks = leafKeys(mode, id); return ks.length > 0 && ks.every(k => progress[k]?.done) }
-  const ctx = { open, toggle, sel: selId, pick: id => go({ mode, id }), doneOf, stat }, label = { ndmo: 'NDMO', ndi: 'NDI', oe: 'NDI OE' }[mode]
+  const ctx = { open, toggle, sel: selId, pick: id => go({ mode, id }), doneOf, stat }, label = { ndmo: 'NDMO', ndi: 'NDI', oe: 'NDI OE', pdpl: 'PDPL' }[mode]
   const node = selId ? findNode(tree, selId) : null, path = selId ? pathTo(tree, selId) || [] : []
   const crumbs = [{ t: label, nav: selId ? { mode, id: '' } : null }, ...path.map((n, i) => ({ t: n.label, nav: i < path.length - 1 ? { mode, id: n.id } : null }))]
   let view
@@ -109,7 +124,7 @@ export default function Workspace({ mode, selId, go }) {
   else if (!node) view = <p className="text-sm text-slate-500">Page not found.</p>
   else if (node.custom) view = <CustomView id={selId} go={go} />
   else if (!node.leaf) view = <BranchOverview mode={mode} node={node} go={go} />
-  else view = mode === 'ndmo' ? <NdmoView id={selId} go={go} /> : mode === 'ndi' ? <NdiView id={selId} go={go} /> : <OeView id={selId} go={go} />
+  else view = mode === 'pdpl' ? <PdplView id={selId} go={go} /> : mode === 'ndmo' ? <NdmoView id={selId} go={go} /> : mode === 'ndi' ? <NdiView id={selId} go={go} /> : <OeView id={selId} go={go} />
   const addSection = async () => { const title = prompt('Name of the new section'); if (!title) return; const nid = await call('app_save_node', { p_id: null, p_parent: null, p_mode: mode, p_title: title, p_body: '', p_sort: nodes.length }); await refresh(); go({ mode, id: 'X:' + nid }) }
   return (<div className={`mx-auto grid max-w-[1500px] gap-4 px-4 py-4 ${side ? 'lg:grid-cols-[24rem_minmax(0,1fr)]' : 'lg:grid-cols-[2.75rem_minmax(0,1fr)]'}`}>
     {side ? <aside aria-label="Side menu" className="max-h-[calc(100vh-9rem)] overflow-auto rounded-xl border border-slate-200 bg-white shadow-sm lg:sticky lg:top-4">
@@ -118,5 +133,5 @@ export default function Workspace({ mode, selId, go }) {
       <div className="p-2"><Tree nodes={tree} depth={0} ctx={ctx} />{isAdmin && <button onClick={addSection} className="mt-2 flex w-full items-center justify-center gap-1 rounded-lg border border-dashed border-ksa py-2 text-xs font-medium text-ksa hover:bg-ksa-light"><Plus size={14} />Add section</button>}</div></aside>
       : <button onClick={() => setSide(true)} aria-label="Show menu" title="Show menu" className="h-10 rounded-lg border bg-white p-2 text-ksa shadow-sm lg:self-start"><PanelLeftOpen size={18} /></button>}
     <div className="min-w-0 space-y-4"><nav aria-label="Breadcrumb" className="flex flex-wrap items-center gap-1 rounded-xl border bg-white px-3 py-2 text-sm shadow-sm">{crumbs.map((c, i) => <span key={i} className="flex min-w-0 items-center gap-1">{i > 0 && <ChevronRight size={14} className="shrink-0 text-slate-400" />}
-      {c.nav ? <button onClick={() => go(c.nav)} title={c.t} className="max-w-[16rem] truncate text-ksa hover:underline">{c.t}</button> : <span title={c.t} className={`max-w-[22rem] truncate ${i === crumbs.length - 1 ? 'font-semibold' : ''}`}>{c.t}</span>}</span>)}</nav>{view}</div></div>)
+      {c.nav ? <button onClick={() => go(c.nav)} title={c.t} className="max-w-[16rem] truncate text-ksa hover:underline">{c.t}</button> : <span title={c.t} className={`max-w-[22rem] truncate ${i === crumbs.length - 1 ? 'font-semibold' : ''}`}>{c.t}</span>}</span>)}<a href={`#/${mode}/${encodeURIComponent(selId)}`} target="_blank" rel="noopener noreferrer" className="ms-auto text-xs text-ksa underline">Open in new tab</a></nav>{view}</div></div>)
 }
